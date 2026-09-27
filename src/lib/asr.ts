@@ -38,7 +38,7 @@ export type AsrEvent =
   | { kind: 'partial'; text: string }
   | { kind: 'silence' }
   | { kind: 'final'; text: string | null; onDevice: boolean }
-  | { kind: 'error'; message: string }
+  | { kind: 'error'; message: string; code?: string }
   | { kind: 'cancelled'; reason: 'user' | 'lifecycle' }
 
 export interface DictationStart {
@@ -130,7 +130,8 @@ export function asrEventFromNative(data: {
     case 'final':
       return { kind: 'final', text: data.text ?? null, onDevice: Boolean(data.onDevice) }
     case 'error':
-      return { kind: 'error', message: asrErrorMessage(data.code) }
+      // Код сервиса сохраняем: по нему видно, что именно ответило устройство.
+      return { kind: 'error', message: asrErrorMessage(data.code), code: data.code }
     case 'cancelled':
       return { kind: 'cancelled', reason: data.reason === 'lifecycle' ? 'lifecycle' : 'user' }
     default:
@@ -156,12 +157,48 @@ export function asrErrorMessage(code?: string): string {
     case 'SERVER':
       return 'Сервис распознавания вернул ошибку.'
     case 'NO_START':
-      return 'Не удалось начать запись: сервис распознавания не ответил.'
+      return 'Не удалось начать запись: сервис распознавания не ответил. Попробуйте ещё раз — сервису бывает нужно время, чтобы включиться.'
     case 'NO_RESULT':
       return 'Сервис распознавания не отдал результат.'
+    case 'TOO_MANY':
+      return 'Сервис распознавания перегружен запросами: попробуйте через минуту.'
+    case 'NO_LANGUAGE':
+      return 'Сервис распознавания не поддерживает русский язык: включите русский в настройках распознавания речи Android.'
+    case 'NO_PACK':
+      return 'Нет русского офлайн-пакета распознавания: скачайте его в настройках Android (Система → Языки и ввод → Распознавание речи) или подключитесь к интернету.'
     default:
       return 'Не удалось распознать речь.'
   }
+}
+
+/**
+ * Код отказа плагина: Capacitor кладёт его в `error.code`, а текст — в
+ * `error.message`. Нужен, чтобы причина отказа не подменялась общей фразой.
+ */
+export function asrFailureCode(error: unknown): string | null {
+  if (typeof error === 'string') return error || null
+  if (error && typeof error === 'object') {
+    const { code, message } = error as { code?: unknown; message?: unknown }
+    if (typeof code === 'string' && code) return code
+    if (typeof message === 'string' && message) return message
+  }
+  return null
+}
+
+/**
+ * Почему запись не началась — словами.
+ *
+ * До этого любая осечка старта показывалась одной и той же фразой «сервис
+ * распознавания не ответил», и настоящая причина терялась: отказ в микрофоне,
+ * отсутствие сервиса и молчащий плагин выглядели одинаково.
+ */
+export function describeStartFailure(error: unknown): string {
+  const code = asrFailureCode(error)
+  if (code?.includes('PERMISSION_DENIED') || code?.includes('Нет разрешения')) return describeMicDenied()
+  if (code?.includes('NO_SERVICE') || code?.includes('недоступно на этом устройстве')) {
+    return 'Распознавание речи недоступно на этом устройстве — можно печатать текстом.'
+  }
+  return asrErrorMessage('NO_START')
 }
 
 /** Причина недоступности распознавания — или null, если оно работает. */

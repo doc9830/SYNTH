@@ -17,6 +17,7 @@ import {
   DICTATION_TAP_HINT,
   asrErrorMessage,
   asrEventFromNative,
+  asrFailureCode,
   asrSupported,
   cancelDictation,
   describeAsrUnavailable,
@@ -24,6 +25,7 @@ import {
   describeDictationNetwork,
   describeDictationSource,
   describeMicDenied,
+  describeStartFailure,
   probeAsr,
   requestMicAccess,
   stopDictation,
@@ -83,6 +85,11 @@ check(
   'ошибка приходит понятной фразой, а не кодом',
   failed?.kind === 'error' && failed.message === asrErrorMessage('NO_MATCH'),
 )
+const noPack = asrEventFromNative({ state: 'error', code: 'NO_PACK' })
+check(
+  'код ошибки сервиса доходит до диагностики',
+  noPack?.kind === 'error' && noPack.code === 'NO_PACK' && noPack.message === asrErrorMessage('NO_PACK'),
+)
 const cancelUser = asrEventFromNative({ state: 'cancelled' })
 const cancelLifecycle = asrEventFromNative({ state: 'cancelled', reason: 'lifecycle' })
 check(
@@ -95,7 +102,20 @@ check(
 
 // ── Тексты: что видит пользователь ─────────────────────────────────────
 
-const codes = ['NO_MATCH', 'SILENCE', 'NETWORK', 'PERMISSION_DENIED', 'BUSY', 'AUDIO', 'SERVER', 'NO_START', 'NO_RESULT']
+const codes = [
+  'NO_MATCH',
+  'SILENCE',
+  'NETWORK',
+  'PERMISSION_DENIED',
+  'BUSY',
+  'AUDIO',
+  'SERVER',
+  'NO_START',
+  'NO_RESULT',
+  'TOO_MANY',
+  'NO_LANGUAGE',
+  'NO_PACK',
+]
 check(
   'каждый код ошибки сервиса объяснён словами',
   codes.every((code) => asrErrorMessage(code).length > 15 && asrErrorMessage(code) !== asrErrorMessage('НЕИЗВЕСТНО')),
@@ -106,6 +126,41 @@ check(
 )
 check('сетевая ошибка напоминает про офлайн-пакет', /офлайн-пакет/.test(asrErrorMessage('NETWORK')))
 check('отказ в микрофоне отправляет в настройки Android', /настройках Android/i.test(asrErrorMessage('PERMISSION_DENIED')))
+check(
+  'нет русского языка — сказано, где его включить',
+  /русск/i.test(asrErrorMessage('NO_LANGUAGE')) && /Android/.test(asrErrorMessage('NO_LANGUAGE')),
+)
+check('нет офлайн-пакета — сказано, где его скачать', /офлайн-пакет/.test(asrErrorMessage('NO_PACK')))
+check('перегруженный сервис просит подождать', /попробуйте/i.test(asrErrorMessage('TOO_MANY')))
+
+// ── Отказ старта: причина не подменяется общей фразой ──────────────────
+
+check(
+  'отказ плагина читается по error.code',
+  asrFailureCode({ code: 'NO_SERVICE', message: 'что-то' }) === 'NO_SERVICE' &&
+    asrFailureCode(new Error('плагин не ответил')) === 'плагин не ответил' &&
+    asrFailureCode('NO_START') === 'NO_START' &&
+    asrFailureCode(null) === null &&
+    asrFailureCode('') === null,
+)
+const startFailures = [{ code: 'PERMISSION_DENIED' }, { code: 'NO_SERVICE' }, { code: 'NO_START' }, {}, undefined]
+check(
+  'любой отказ старта объяснён по-русски',
+  startFailures.every((error) => /[а-яА-Я]/.test(describeStartFailure(error))),
+)
+check(
+  'отказ в микрофоне не выдаётся за «сервис не ответил»',
+  describeStartFailure({ code: 'PERMISSION_DENIED' }) === describeMicDenied(),
+)
+check(
+  'отсутствие сервиса объясняется отдельно',
+  describeStartFailure({ code: 'NO_SERVICE' }).includes('текстом'),
+)
+check(
+  'неизвестный отказ зовёт попробовать снова',
+  describeStartFailure({ code: 'ЧТО-ТО' }) === asrErrorMessage('NO_START') &&
+    /попробуйте ещё раз/i.test(describeStartFailure(undefined)),
+)
 check('подпись кнопки в покое объясняет тапы', describeDictationButton(false).includes(DICTATION_TAP_HINT))
 check('во время записи кнопка говорит «закончить»', describeDictationButton(true) === 'Закончить запись')
 check(
@@ -289,6 +344,47 @@ check(
 )
 check('аудио не пишется на диск и не отправляется из плагина', !/OutputStream|MediaRecorder/.test(plugin))
 
+// 1.7.1: «Озвучить» пропала из-за расхождения имён плагина, 1.7.2: голосовой
+// ввод отвечал «сервис распознавания не ответил» — потому что старт уходил в
+// свежий распознаватель до того, как сервис успевал подключиться. Эти проверки
+// держат путь старта: пауза на подключение, повтор другим распознавателем,
+// отличие молчания от работающего сервиса.
+
+check(
+  'старт отдаётся сервису после паузы на подключение',
+  plugin.includes('ASR_BIND_DELAY_MS') && /postDelayed\(asrStart, ASR_BIND_DELAY_MS\)/.test(plugin),
+)
+check(
+  'молчащий сервис — не конец: старт повторяют другим распознавателем',
+  /asrAttempts < ASR_MAX_ATTEMPTS/.test(plugin) && /retryWithOtherRecognizer\(\)/.test(plugin),
+)
+check(
+  'молчащий офлайн-сервис запоминается, чтобы не ждать его каждый раз',
+  /onDeviceSilent = true/.test(plugin) && /!onDeviceSilent/.test(plugin),
+)
+check(
+  'любой отклик сервиса снимает страховку старта',
+  /markAlive\(\)/.test(plugin) &&
+    /onRmsChanged[\s\S]{0,200}markAlive\(\)/.test(plugin) &&
+    /onPartialResults[\s\S]{0,200}markAlive\(\)/.test(plugin),
+)
+check(
+  'коды API 31+ (язык, офлайн-пакет, загруженность) переведены в причины',
+  /ERROR_CODE_LANGUAGE_UNAVAILABLE/.test(plugin) &&
+    plugin.includes('return "NO_PACK"') &&
+    plugin.includes('return "NO_LANGUAGE"') &&
+    plugin.includes('return "TOO_MANY"'),
+)
+check(
+  'повтор идёт только к другому распознавателю — молчащий дважды не ждут',
+  /boolean alternate = wasOnDevice/.test(plugin) && /alternate && asrAttempts < ASR_MAX_ATTEMPTS/.test(plugin),
+)
+check(
+  '«закончить» отменяет отложенный старт: после стопа запись не начинается',
+  /else if \(active\) \{[\s\S]{0,300}removeCallbacks\(asrStartTimeout\)[\s\S]{0,200}stopListening\(\)/.test(plugin),
+)
+check('«закончить» до старта не выдаёт ошибку сервиса', /active && !asrListening/.test(plugin))
+
 // ── Интерфейс: кнопка, отмена, уход в фон ──────────────────────────────
 
 const composer = source('ui/Composer.tsx')
@@ -341,6 +437,23 @@ check(
 const asrLayer = source('lib/asr.ts')
 check('события прошлых сессий игнорируются', /const alive = \(\) => session === mySession/.test(asrLayer))
 check('вне Android распознавание не стартует', /if \(!asrSupported\(\)\) return/.test(asrLayer))
+
+// Причина отказа старта должна доходить до человека и до Debug Console: раньше
+// `catch {}` в `useDictation.ts` превращал любой отказ в одну фразу «сервис
+// распознавания не ответил», и по ней нельзя было понять, что случилось.
+
+const dictationStore = source('lib/useDictation.ts')
+check(
+  'причина отказа старта не прячется за общей фразой',
+  /catch \(error\)[\s\S]{0,400}describeStartFailure\(error\)/.test(dictationStore) &&
+    !/catch \{\s*\n\s*set\(IDLE\)/.test(dictationStore),
+)
+check(
+  'отказ старта и код ошибки сервиса уходят в Debug Console',
+  /debugLog\('error', 'Голосовой ввод: запись не началась'/.test(dictationStore) &&
+    /debugLog\('error', 'Голосовой ввод: сервис распознавания вернул ошибку'/.test(dictationStore) &&
+    /event\.code/.test(dictationStore),
+)
 
 const dictationSources = [asrLayer, nativeAsr, source('lib/useDictation.ts')].join('\n')
 check(

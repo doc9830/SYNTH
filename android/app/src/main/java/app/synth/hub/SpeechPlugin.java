@@ -111,10 +111,36 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
     private static final String ASR_LANGUAGE = "ru-RU";
     /** Молчание, после которого сервис сам завершает запись. */
     private static final int ASR_SILENCE_MS = 1100;
+    /**
+     * Пауза между созданием распознавателя и `startListening()`: сервису нужно
+     * успеть подключиться (`bindService`). Старт, отданный до подключения,
+     * системный класс теряет молча — тогда в ответ не приходит ни одного
+     * колбэка, и запись висит до страховочного таймаута, то есть человек видит
+     * «сервис распознавания не ответил» при полностью живом сервисе.
+     */
+    private static final long ASR_BIND_DELAY_MS = 350;
     /** Страховка: сервис не отозвался — сообщаем об ошибке, а не висим «слушаю». */
     private static final long ASR_START_TIMEOUT_MS = 8000;
     /** Страховка после «закончить»: молчащий сервис не держит микрофон открытым. */
     private static final long ASR_STOP_TIMEOUT_MS = 4000;
+    /**
+     * Сколько стартов делаем, прежде чем признать, что сервис не отвечает.
+     * Вторая попытка идёт другим распознавателем (офлайн → системный): на части
+     * прошивок офлайн-сервис объявлен, но молчит без скачанного пакета языка.
+     */
+    private static final int ASR_MAX_ATTEMPTS = 2;
+
+    /**
+     * Коды ошибок сервиса распознавания, добавленные в API 31 — там они
+     * называются `SpeechRecognizer.ERROR_*`. Держим числами: так классу не нужны
+     * новые API на этапе выполнения, а комментарий объясняет, откуда числа.
+     */
+    private static final int ERROR_CODE_TOO_MANY_REQUESTS = 10;
+    private static final int ERROR_CODE_SERVER_DISCONNECTED = 11;
+    private static final int ERROR_CODE_LANGUAGE_NOT_SUPPORTED = 12;
+    private static final int ERROR_CODE_LANGUAGE_UNAVAILABLE = 13;
+    private static final int ERROR_CODE_CANNOT_CHECK_SUPPORT = 14;
+    private static final int ERROR_CODE_CANNOT_LISTEN_TO_DOWNLOAD_EVENTS = 15;
 
     private SpeechRecognizer recognizer;
     private boolean recognizing = false;
@@ -122,16 +148,35 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
     private boolean recognizerOnDevice = false;
     /** Отмена своей же записи: ошибку ERROR_CLIENT после неё показывать нельзя. */
     private boolean cancelRequested = false;
+    /** Интент последнего старта: по нему повторяем попытку другим распознавателем. */
+    private Intent asrIntent;
+    /** Сколько стартов сделано в текущей сессии (для повтора другим сервисом). */
+    private int asrAttempts = 0;
+    /** true — «слушай» уже ушло в сервис (до этого «закончить» нечего). */
+    private boolean asrListening = false;
+    /**
+     * Офлайн-сервис уже молчал: до перезапуска приложения берём системный.
+     * Ждать второй раз тот же сервис незачем — состояние чужого сервиса не наша
+     * ошибка, но и не повод показывать «не ответил» на каждой попытке записи.
+     */
+    private static boolean onDeviceSilent = false;
 
     private static final String TAG_ASR = "SynthSpeech/ASR";
+
+    /** Старт, отложенный до подключения сервиса (см. `ASR_BIND_DELAY_MS`). */
+    private final Runnable asrStart = new Runnable() {
+        @Override
+        public void run() {
+            startListeningNow();
+        }
+    };
 
     private final Runnable asrStartTimeout = new Runnable() {
         @Override
         public void run() {
             if (!recognizing) return;
-            Logger.warn(TAG_ASR, "сервис распознавания не отозвался за " + ASR_START_TIMEOUT_MS + " мс");
-            emitRecognition("error", null, "NO_START", null);
-            destroyRecognizer();
+            Logger.warn(TAG_ASR, "старт без ответа за " + ASR_START_TIMEOUT_MS + " мс" + asrAttemptInfo());
+            retryWithOtherRecognizer();
         }
     };
 
@@ -458,7 +503,9 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
     @PluginMethod
     public void asrAvailable(PluginCall call) {
         Context context = getContext().getApplicationContext();
-        boolean onDevice = onDeviceAvailable(context);
+        // Офлайн-сервис, который уже промолчал, за рабочий не считаем: интерфейс
+        // должен обещать ровно тот движок, который будет использован на записи.
+        boolean onDevice = !onDeviceSilent && onDeviceAvailable(context);
         boolean service = SpeechRecognizer.isRecognitionAvailable(context);
 
         JSObject ret = new JSObject();
@@ -497,6 +544,12 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
      * Старт записи. Офлайн-сервис устройства берём, когда он есть (API 31+);
      * иначе — системный сервис с `EXTRA_PREFER_OFFLINE`: система может уйти в
      * сеть, и об этом честно предупреждает интерфейс.
+     *
+     * Сервису отдаём старт не в этом же кадре, а короткой задержкой
+     * (`ASR_BIND_DELAY_MS`): свежий распознаватель только начинает подключаться,
+     * и `startListening()` до подключения пропадает молча. Если сервис так и не
+     * отозвался — пробуем другой распознаватель (`retryWithOtherRecognizer`),
+     * и только потом JS узнаёт о неудаче событием `error` с кодом `NO_START`.
      */
     @PluginMethod
     public void startRecognize(PluginCall call) {
@@ -512,35 +565,29 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
         String language = call.getString("lang", ASR_LANGUAGE);
         int silenceMs = call.getInt("silenceMs", ASR_SILENCE_MS);
 
-        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, language);
-        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, language);
-        intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
-        intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
-        intent.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, getContext().getPackageName());
+        asrIntent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        asrIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        asrIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, language);
+        asrIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, language);
+        asrIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+        asrIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+        asrIntent.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, getContext().getPackageName());
         // Автостоп по тишине: сервис завершает запись сам, без кнопки «стоп».
-        intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, (long) silenceMs);
-        intent.putExtra(
+        asrIntent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, (long) silenceMs);
+        asrIntent.putExtra(
                 RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS,
                 (long) Math.max(400, silenceMs / 2));
         if (!recognizerOnDevice) {
             // Старый Android: офлайн — только предпочтение, сервис может уйти в облако.
-            intent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
+            asrIntent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
         }
 
-        try {
-            cancelRequested = false;
-            recognizing = true;
-            handler.removeCallbacks(asrStopTimeout);
-            recognizer.startListening(intent);
-        } catch (Exception e) {
-            recognizing = false;
-            Logger.warn(TAG_ASR, "startListening: " + e.getMessage());
-            call.reject("Не удалось начать запись.", "NO_START");
-            return;
-        }
-        handler.postDelayed(asrStartTimeout, ASR_START_TIMEOUT_MS);
+        cancelRequested = false;
+        recognizing = true;
+        asrAttempts = 0;
+        asrListening = false;
+        handler.removeCallbacks(asrStopTimeout);
+        scheduleStart();
 
         JSObject ret = new JSObject();
         ret.put("onDevice", recognizerOnDevice);
@@ -548,12 +595,101 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
         call.resolve(ret);
     }
 
+    /** Старт после паузы на подключение сервиса: см. `ASR_BIND_DELAY_MS`. */
+    private void scheduleStart() {
+        handler.removeCallbacks(asrStart);
+        handler.removeCallbacks(asrStartTimeout);
+        handler.postDelayed(asrStart, ASR_BIND_DELAY_MS);
+    }
+
+    /** Отдаёт сервису «слушай»; ответа ждём страховочным таймаутом. */
+    private void startListeningNow() {
+        if (!recognizing || recognizer == null || asrIntent == null) return;
+        asrAttempts++;
+        try {
+            recognizer.startListening(asrIntent);
+            asrListening = true;
+        } catch (Exception e) {
+            Logger.warn(TAG_ASR, "startListening: " + e.getMessage() + asrAttemptInfo());
+            asrListening = false;
+            retryWithOtherRecognizer();
+            return;
+        }
+        Logger.info(TAG_ASR, "слушаю: " + sourceName() + asrAttemptInfo());
+        handler.removeCallbacks(asrStartTimeout);
+        handler.postDelayed(asrStartTimeout, ASR_START_TIMEOUT_MS);
+    }
+
+    /**
+     * Сервис молчит: отпускаем распознаватель и пробуем другой. Офлайн-сервис
+     * вполне может быть объявлен на устройстве, но не работать без скачанного
+     * пакета языка — тогда системный отвечает там, где офлайн промолчал.
+     * Когда попытки кончились, JS получает `error` с кодом `NO_START`: начать
+     * запись не удалось, и об этом человеку говорят словами, а не тишиной.
+     */
+    private void retryWithOtherRecognizer() {
+        boolean wasOnDevice = recognizerOnDevice;
+        if (wasOnDevice) onDeviceSilent = true;
+        String failed = sourceName();
+        int attempts = asrAttempts;
+        destroyRecognizer();
+        // Повтор смысл имеет, только если он будет другим распознавателем: тот же
+        // самый молчащий сервис со второй попытки не ответит, а человек ждал бы
+        // ошибку вдвое дольше.
+        Context context = getContext().getApplicationContext();
+        boolean alternate = wasOnDevice
+                ? SpeechRecognizer.isRecognitionAvailable(context)
+                : (!onDeviceSilent && onDeviceAvailable(context));
+        if (alternate && asrAttempts < ASR_MAX_ATTEMPTS) {
+            recognizing = true;
+            cancelRequested = false;
+            asrListening = false;
+            if (ensureRecognizer()) {
+                Logger.warn(TAG_ASR, "повторяем старт: " + sourceName());
+                scheduleStart();
+                return;
+            }
+            recognizing = false;
+        }
+        Logger.warn(TAG_ASR, "распознавание не ответило: " + failed + ", попытки: " + attempts);
+        emitRecognition("error", null, "NO_START", null);
+        destroyRecognizer();
+    }
+
+    /** Имя распознавателя и номер попытки — для журнала устройства. */
+    private String asrAttemptInfo() {
+        return " (" + sourceName() + ", попытка " + asrAttempts + ")";
+    }
+
+    private String sourceName() {
+        return recognizerOnDevice ? "офлайн-сервис" : "системный сервис";
+    }
+
+    /**
+     * Любой колбэк сервиса означает, что он жив: страховка старта больше не
+     * нужна. Так молчание отличается от медленного, но работающего сервиса —
+     * иначе запись обрывалась бы на середине фразы.
+     */
+    private void markAlive() {
+        handler.removeCallbacks(asrStartTimeout);
+    }
+
     /** «Закончить»: сервис отдаёт итоговый текст (частичный сохраняется в JS). */
     @PluginMethod
     public void stopRecognize(PluginCall call) {
         boolean active = recognizing && recognizer != null;
-        if (active) {
+        if (active && !asrListening) {
+            // «Закончить» пришло раньше самого старта (запись ещё поднималась):
+            // слушать было нечего — отдаём пустой итог, а не ошибку сервиса.
+            handler.removeCallbacks(asrStart);
+            emitRecognition("final", null, null, null);
+            destroyRecognizer();
+            active = false;
+        } else if (active) {
             try {
+                // «Закончить» — уже не старт: отложенный повтор отменяем, иначе
+                // запись может начаться заново после того, как человек её закрыл.
+                handler.removeCallbacks(asrStartTimeout);
                 recognizer.stopListening();
                 // Сервис может промолчать: тогда сработает страховка ниже.
                 handler.postDelayed(asrStopTimeout, ASR_STOP_TIMEOUT_MS);
@@ -587,7 +723,9 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
         if (recognizer != null) return true;
         Context context = getContext().getApplicationContext();
 
-        if (onDeviceAvailable(context)) {
+        // Офлайн-сервис пропускаем, если он уже молчал: ждать его второй раз
+        // незачем, а системный сервис на таком устройстве отвечает.
+        if (!onDeviceSilent && onDeviceAvailable(context)) {
             try {
                 recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(context);
                 recognizerOnDevice = true;
@@ -622,9 +760,11 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
 
     /** Освобождает распознаватель и микрофон (`destroy()` по документации). */
     private void destroyRecognizer() {
+        handler.removeCallbacks(asrStart);
         handler.removeCallbacks(asrStartTimeout);
         handler.removeCallbacks(asrStopTimeout);
         recognizing = false;
+        asrListening = false;
         SpeechRecognizer current = recognizer;
         recognizer = null;
         recognizerOnDevice = false;
@@ -641,20 +781,21 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
 
     @Override
     public void onReadyForSpeech(Bundle params) {
-        handler.removeCallbacks(asrStartTimeout);
+        markAlive();
         emitRecognition("ready", null, null, null);
     }
 
     @Override
     public void onBeginningOfSpeech() {
-        handler.removeCallbacks(asrStartTimeout);
+        markAlive();
         emitRecognition("speech", null, null, null);
     }
 
     /** Уровень сигнала не показываем: индикатор громкости только отвлекает. */
     @Override
     public void onRmsChanged(float rmsdB) {
-        // намеренно пусто
+        // Звук пошёл — сервис слушает: страховка старта больше не нужна.
+        markAlive();
     }
 
     @Override
@@ -665,12 +806,14 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
     /** Тишина: сервис сам завершает запись и вот-вот отдаст итоговый текст. */
     @Override
     public void onEndOfSpeech() {
+        markAlive();
         emitRecognition("silence", null, null, null);
     }
 
     @Override
     public void onResults(Bundle results) {
         recognizing = false;
+        asrListening = false;
         handler.removeCallbacks(asrStartTimeout);
         handler.removeCallbacks(asrStopTimeout);
         emitRecognition("final", firstResult(results), null, null);
@@ -678,6 +821,8 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
 
     @Override
     public void onPartialResults(Bundle partialResults) {
+        // Частичный текст — тоже признак живого сервиса.
+        markAlive();
         String text = firstResult(partialResults);
         if (text == null || text.isEmpty()) return;
         emitRecognition("partial", text, null, null);
@@ -686,6 +831,7 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
     @Override
     public void onError(int error) {
         recognizing = false;
+        asrListening = false;
         handler.removeCallbacks(asrStartTimeout);
         handler.removeCallbacks(asrStopTimeout);
         if (cancelRequested) {
@@ -745,6 +891,18 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
                 return "SERVER";
             case SpeechRecognizer.ERROR_SPEECH_TIMEOUT:
                 return "SILENCE";
+            // API 31+: сервис умеет сообщать про загруженность, отключение и
+            // отсутствие языка. Коды берём своими числами (см. ERROR_CODE_*).
+            case ERROR_CODE_TOO_MANY_REQUESTS:
+                return "TOO_MANY";
+            case ERROR_CODE_SERVER_DISCONNECTED:
+                return "NETWORK";
+            case ERROR_CODE_LANGUAGE_NOT_SUPPORTED:
+                return "NO_LANGUAGE";
+            case ERROR_CODE_LANGUAGE_UNAVAILABLE:
+            case ERROR_CODE_CANNOT_CHECK_SUPPORT:
+            case ERROR_CODE_CANNOT_LISTEN_TO_DOWNLOAD_EVENTS:
+                return "NO_PACK";
             default:
                 return "UNKNOWN";
         }

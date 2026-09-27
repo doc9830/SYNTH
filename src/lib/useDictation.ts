@@ -1,11 +1,13 @@
 import { create } from 'zustand'
 import {
+  asrFailureCode,
   asrSupported,
   cancelDictation,
   describeAsrUnavailable,
   describeDictationNetwork,
   describeDictationSource,
   describeMicDenied,
+  describeStartFailure,
   probeAsr,
   requestMicAccess,
   startDictation,
@@ -184,6 +186,11 @@ export const useDictation = create<DictationState>((set, get) => {
       return
     }
     if (event.kind === 'error') {
+      // Код сервиса пишем в Debug Console: по нему видно, что ответило устройство.
+      debugLog('error', 'Голосовой ввод: сервис распознавания вернул ошибку', [
+        event.code ?? event.message,
+        event.message,
+      ])
       notify(event.message, 'error')
       set({ ...draft, status: 'idle' })
       void finishSession()
@@ -249,9 +256,13 @@ export const useDictation = create<DictationState>((set, get) => {
           warnedNetwork = true
           notify(describeDictationNetwork(), 'info')
         }
-      } catch {
+      } catch (error) {
+        // Причину отказа не прячем: у старта она бывает разной (нет разрешения,
+        // нет сервиса, молчит плагин), и в Debug Console должно быть видно какая.
+        const reason = describeStartFailure(error)
+        debugLog('error', 'Голосовой ввод: запись не началась', [reason, asrFailureCode(error)])
         set(IDLE)
-        notify('Не удалось начать запись: сервис распознавания не ответил.', 'error')
+        notify(reason, 'error')
       }
     },
 

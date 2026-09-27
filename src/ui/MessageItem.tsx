@@ -5,6 +5,7 @@ import { exportMarkdown, filesFromMarkdown, joinedFileFromMarkdown, slugify } fr
 import { describeStreamPhase } from '@/lib/streamPhase'
 import { selectStreamPatch, useStreamDraft } from '@/lib/streamDraft'
 import { notify } from '@/lib/toast'
+import { canSpeak, useSpeech } from '@/lib/useSpeech'
 import { cn, formatTime, truncate } from '@/lib/utils'
 import type { ChatMessage } from '@/types'
 import {
@@ -16,7 +17,9 @@ import {
   IconPlay,
   IconRefresh,
   IconShare,
+  IconStop,
   IconTrash,
+  IconVolume,
 } from './icons'
 import { BrandMark } from './BrandMark'
 import { ImageGrid } from './ImageGrid'
@@ -103,6 +106,29 @@ function CopyButton({ text }: { text: string }) {
       }}
     >
       {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+    </ActionButton>
+  )
+}
+
+/**
+ * «Озвучить» / «Стоп»: читает ответ системным синтезом речи (задача 06).
+ * Кнопки нет вовсе, если движка/русского голоса нет — вместо неработающей
+ * кнопки пользователь один раз видит пояснение (см. useSpeech.ensureProbe).
+ */
+function SpeakButton({ message }: { message: ChatMessage }) {
+  const info = useSpeech((s) => s.info)
+  const status = useSpeech((s) => s.status)
+  const speakingId = useSpeech((s) => s.messageId)
+  const toggle = useSpeech((s) => s.toggle)
+  if (!canSpeak(info)) return null
+
+  const active = speakingId === message.id && status !== 'idle'
+  return (
+    <ActionButton
+      title={active ? 'Остановить озвучку' : 'Озвучить ответ'}
+      onClick={() => void toggle(message.id, message.content)}
+    >
+      {active ? <IconStop size={16} /> : <IconVolume size={16} />}
     </ActionButton>
   )
 }
@@ -281,6 +307,8 @@ function AssistantMessage({
   onDelete,
 }: MessageItemProps) {
   const toolCalls = message.toolCalls ?? []
+  /** Читаемый сейчас фрагмент этого сообщения — null, если читается другое. */
+  const speakingKey = useSpeech((s) => (s.messageId === message.id ? s.chunkKey : null))
   const images = toolCalls.flatMap((t) => t.images ?? [])
   const streaming = message.status === 'streaming'
   const runningTool = toolCalls.some((t) => t.status === 'running')
@@ -318,7 +346,7 @@ function AssistantMessage({
 
         {showToolActivity && <ToolActivity records={toolCalls} />}
 
-        {message.content && <Markdown content={message.content} />}
+        {message.content && <Markdown content={message.content} highlight={speakingKey} />}
 
         {streaming && message.content && (
           <span className="caret-blink ml-0.5 inline-block h-4 w-[2px] bg-neutral-400 align-middle dark:bg-neutral-500" />
@@ -360,6 +388,7 @@ function AssistantMessage({
               {message.usage?.totalTokens ? ` · ${message.usage.totalTokens} токенов` : ''}
             </span>
             <CopyButton text={message.content} />
+            {message.content.trim() !== '' && <SpeakButton message={message} />}
             <ShareButtons message={message} />
             <ActionButton
               title="Сгенерировать заново"

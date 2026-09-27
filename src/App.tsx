@@ -3,13 +3,14 @@ import type { ImageAttachment } from '@/types'
 import { pushBackHandler, handleBackPress } from '@/lib/backStack'
 import { useActiveConversation, useConversations, useConversationMessages, useMessagesLoading } from '@/lib/conversations'
 import { useMemory } from '@/lib/memory'
-import { minimizeApp, onAndroidBack, onAppResume } from '@/lib/nativeShell'
+import { minimizeApp, onAndroidBack, onAppPause, onAppResume } from '@/lib/nativeShell'
 import { getReadiness } from '@/lib/readiness'
 import { isConfigured, useSettings } from '@/lib/settings'
 import { notify } from '@/lib/toast'
 import { useUpdateStore } from '@/lib/updateStore'
 import { useAppearance } from '@/lib/useAppearance'
 import { useChat } from '@/lib/useChat'
+import { useSpeech } from '@/lib/useSpeech'
 import { ChatHeader } from '@/ui/ChatHeader'
 import { Composer } from '@/ui/Composer'
 import { DebugConsole } from '@/ui/DebugConsole'
@@ -137,6 +138,21 @@ export default function App() {
   // сразу доустанавливаем обновление, чтобы не заставлять жать «Установить».
   const retryPendingInstall = useUpdateStore((s) => s.retryPendingInstall)
   useEffect(() => onAppResume(() => void retryPendingInstall()), [retryPendingInstall])
+
+  // Озвучка ответов (задача 06): движок и русский голос проверяем один раз
+  // при запуске, но с небольшой задержкой — чтобы проверка не конкурировала
+  // с загрузкой чата. Кнопка «Озвучить» появляется только если движок есть.
+  const ensureSpeech = useSpeech((s) => s.ensureProbe)
+  useEffect(() => {
+    if (!loaded) return undefined
+    const timer = window.setTimeout(() => void ensureSpeech(), 1500)
+    return () => window.clearTimeout(timer)
+  }, [loaded, ensureSpeech])
+
+  // Свернули приложение (или скрыли вкладку) — глушим озвучку и освобождаем
+  // движок: TTS не должен говорить из кармана и держать ресурсы в фоне.
+  const releaseSpeech = useSpeech((s) => s.release)
+  useEffect(() => onAppPause(() => void releaseSpeech()), [releaseSpeech])
 
   const handleSend = (text: string, attachments: ImageAttachment[]) => {
     if (!readiness.canChat) {

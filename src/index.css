@@ -199,6 +199,25 @@ body {
   margin: 1em 0;
 }
 
+/* ── Озвучка: подсветка читаемого фрагмента (задача 06) ────────
+   Класс ставит ui/Markdown.tsx на абзац/заголовок/пункт/цитату,
+   который читается прямо сейчас. Спокойная подсветка без анимации:
+   «мигание» на длинных ответах мешает читать глазами вслед за голосом. */
+.chat-md .tts-speaking {
+  background: rgb(250 204 21 / 0.18);
+  border-radius: 0.35rem;
+  box-shadow: 0 0 0 1px rgb(250 204 21 / 0.35);
+  transition: background-color 120ms ease-out;
+}
+.dark .chat-md .tts-speaking {
+  background: rgb(250 204 21 / 0.14);
+  box-shadow: 0 0 0 1px rgb(250 204 21 / 0.28);
+}
+/* Пункт списка подсвечиваем без сдвига текста: полоска слева. */
+.chat-md li.tts-speaking {
+  box-shadow: inset 3px 0 0 0 rgb(250 204 21 / 0.7);
+}
+
 /* ── Подсветка синтаксиса (highlight.js) ────────────────────── */
 .hljs-comment,
 .hljs-quote {

@@ -127,6 +127,43 @@ npm run android:assets   # mipmap-*/ic_launcher*, drawable-*/splash.png
 JS-обёртка — `src/lib/files.ts` (`saveTextFile`, `saveImageFile`): в APK вызывается плагин,
 в браузере — обычное скачивание.
 
+## Озвучка ответов (SynthTts)
+
+Локальный плагин `android/app/src/main/java/app/synth/hub/TtsPlugin.java` (регистрируется в
+`MainActivity`) поверх системного `android.speech.tts.TextToSpeech`. JS-обёртка —
+`src/lib/tts.ts`, состояние и очередь — `src/lib/useSpeech.ts`, разбор markdown на фрагменты —
+`src/lib/ttsText.ts`.
+
+| Метод | Что делает |
+| --- | --- |
+| `available()` | есть ли движок и русский голос: `{available, reason?, engine?, voice?, language?, needsNetwork}` |
+| `speak({chunks, rate, pitch})` | ставит фрагменты в очередь движка, шлёт события `progress` |
+| `stop()` | мгновенно обрывает чтение (очищает очередь движка) |
+| `shutdown()` | освобождает движок (`TextToSpeech.shutdown()`) |
+
+Коды причин: `ENGINE_UNAVAILABLE` (движка нет), `ENGINE_TIMEOUT` (не ответил за 6 с),
+`NO_RU_VOICE` (нет голоса для локали `ru`).
+
+Что важно знать по устройству плагина:
+
+- **Разрешения не нужны**, микрофон не используется, аудио никуда не отправляется. Голос берётся из
+  установленных на устройстве; среди русских предпочитается голос без `isNetworkConnectionRequired()`
+  (офлайн). Если русский голос только сетевой — приложение предупреждает об этом один раз и не блокирует.
+- **`<queries>` для `android.intent.action.TTS_SERVICE`** в `AndroidManifest.xml` обязателен на
+  Android 11+ (API 30): без него `TextToSpeech` не видит установленные движки, и «голос не найден»
+  на исправном устройстве. Рядом с уже существующими записями `IMAGE_CAPTURE`/`VIDEO_CAPTURE`.
+- **Озвучка идёт по абзацам**, а не сообщением: первый фрагмент — `QUEUE_FLUSH`, остальные —
+  `QUEUE_ADD`. Поэтому «Стоп» срабатывает в пределах абзаца, а `progress` приходит на каждый фрагмент.
+- **`speak()` умеет ждать инициализации**: после `shutdown()` движок поднимается заново, и вызов
+  не падает с ошибкой, а выполняется, как только движок отзовётся (или по таймауту 6 с).
+- **Ресурсы освобождаются**: `handleOnPause`/`handleOnStop` глушат чтение, `handleOnDestroy` и
+  JS-метод `shutdown()` освобождают движок. Со стороны JS тем же занимается `onAppPause()` из
+  `src/lib/nativeShell.ts`: сворачивание приложения глушит озвучку и сбрасывает состояние кнопки.
+- **Нет русского голоса — нет кнопки**: интерфейс работает как раньше, а пользователь один раз
+  видит пояснение, где поставить голосовые данные (Система → Языки и ввод → Синтез речи).
+  «Сломанной» кнопки озвучки не бывает.
+- В браузере (PWA) используется `speechSynthesis` с русским голосом; если его нет — кнопки нет.
+
 ## Кнопка «Назад» и камера
 
 - Аппаратная «Назад» обрабатывается стеком `src/lib/backStack.ts`: каждая открытая панель
@@ -166,12 +203,12 @@ JS-обёртка — `src/lib/files.ts` (`saveTextFile`, `saveImageFile`): в A
 
 ```bash
 # 1. версия веб-бандла (попадает в appInfo → APP_VERSION)
-#    package.json → "version": "1.5.1"
+#    package.json → "version": "1.6.0"
 # 2. версия пакета
-#    android/app/build.gradle → versionCode 9, versionName "1.5.1"
+#    android/app/build.gradle → versionCode 10, versionName "1.6.0"
 npm run android:release
-cp android/app/build/outputs/apk/release/app-release.apk synth-v1.5.1.apk
-# 3. GitHub → Releases → Draft a new release: tag v1.5.1, приложить synth-v1.5.1.apk
+cp android/app/build/outputs/apk/release/app-release.apk synth-v1.6.0.apk
+# 3. GitHub → Releases → Draft a new release: tag v1.6.0, приложить synth-v1.6.0.apk
 ```
 
 После публикации релиза приложения на телефонах увидят обновление при следующем запуске.

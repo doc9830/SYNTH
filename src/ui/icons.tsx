@@ -51,6 +51,15 @@ export const IconStop = (p: IconProps) => (
   </Icon>
 )
 
+/** Динамик с волнами — «озвучить ответ». */
+export const IconVolume = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M11 5 6.5 9H4v6h2.5L11 19z" />
+    <path d="M15 9.5a3.5 3.5 0 0 1 0 5" />
+    <path d="M17.5 7a7 7 0 0 1 0 10" />
+  </Icon>
+)
+
 export const IconCopy = (p: IconProps) => (
   <Icon {...p}>
     <rect x="9" y="9" width="11" height="11" rx="2" />

@@ -51,5 +51,10 @@
         <intent>
             <action android:name="android.media.action.VIDEO_CAPTURE" />
         </intent>
+        <!-- Тот же API 30+: без этой записи TextToSpeech не видит установленные
+             движки синтеза речи, и озвучка «не находит голос» на ровном месте. -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
     </queries>
 </manifest>

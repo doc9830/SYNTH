@@ -108,3 +108,43 @@ export function onAppResume(handler: () => void): () => void {
     remove?.()
   }
 }
+
+/**
+ * Свернули приложение (APK) или скрыли вкладку (браузер/PWA). Возвращает
+ * функцию отписки.
+ *
+ * Нужно там, где работу нельзя оставлять в фоне: например, озвучка ответов
+ * не должна говорить из кармана, а движок TTS — держать ресурсы
+ * (см. src/lib/useSpeech.ts).
+ */
+export function onAppPause(handler: () => void): () => void {
+  if (!isNativeApp()) {
+    // Веб: аналог сворачивания — вкладка ушла в фон.
+    if (typeof document === 'undefined') return () => undefined
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') handler()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }
+
+  let disposed = false
+  let remove: (() => void) | undefined
+
+  void import('@capacitor/app')
+    .then(({ App: CapacitorApp }) =>
+      CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+        if (!isActive) handler()
+      }).then((sub) => {
+        if (disposed) void sub.remove()
+        else remove = () => void sub.remove()
+      }),
+    )
+    .catch(() => undefined)
+
+  return () => {
+    disposed = true
+    remove?.()
+  }
+}
+

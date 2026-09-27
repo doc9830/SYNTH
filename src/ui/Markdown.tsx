@@ -1,10 +1,11 @@
-import { isValidElement, memo, useState, type ReactNode } from 'react'
+import { isValidElement, memo, useMemo, useState, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import remarkGfm from 'remark-gfm'
 import { copyText } from '@/lib/clipboard'
 import { exportMarkdown, fileNameForBlock } from '@/lib/shareFiles'
 import { notify } from '@/lib/toast'
+import { blockMatches } from '@/lib/ttsText'
 import { cn } from '@/lib/utils'
 import { IconCheck, IconCopy, IconShare } from './icons'
 
@@ -136,24 +137,83 @@ const components: Components = {
   ),
 }
 
+/** Пропс «узкий»: у блока нам нужен только текст и класс от markdown. */
+interface BlockProps {
+  children?: ReactNode
+  className?: string
+}
+
+/** Класс подсветки, если этот блок читается прямо сейчас (задача 06). */
+function speakingClass(children: ReactNode, className: string | undefined, key: string): string {
+  // Точное совпадение редко достижимо (в блоке бывает разметка), поэтому
+  // blockMatches сравнивает ещё и по вложению длинного фрагмента.
+  return cn(className, blockMatches(extractText(children), key) && 'tts-speaking')
+}
+
+/**
+ * Тот же набор компонентов, но абзац/заголовок/пункт/цитата, который сейчас
+ * озвучивается, получает класс `tts-speaking` — его подсвечивает index.css.
+ */
+function componentsWithHighlight(key: string): Components {
+  return {
+    ...components,
+    p: ({ children, className }: BlockProps) => (
+      <p className={speakingClass(children, className, key)}>{children}</p>
+    ),
+    h1: ({ children, className }: BlockProps) => (
+      <h1 className={speakingClass(children, className, key)}>{children}</h1>
+    ),
+    h2: ({ children, className }: BlockProps) => (
+      <h2 className={speakingClass(children, className, key)}>{children}</h2>
+    ),
+    h3: ({ children, className }: BlockProps) => (
+      <h3 className={speakingClass(children, className, key)}>{children}</h3>
+    ),
+    h4: ({ children, className }: BlockProps) => (
+      <h4 className={speakingClass(children, className, key)}>{children}</h4>
+    ),
+    h5: ({ children, className }: BlockProps) => (
+      <h5 className={speakingClass(children, className, key)}>{children}</h5>
+    ),
+    h6: ({ children, className }: BlockProps) => (
+      <h6 className={speakingClass(children, className, key)}>{children}</h6>
+    ),
+    li: ({ children, className }: BlockProps) => (
+      <li className={speakingClass(children, className, key)}>{children}</li>
+    ),
+    blockquote: ({ children, className }: BlockProps) => (
+      <blockquote className={speakingClass(children, className, key)}>{children}</blockquote>
+    ),
+  }
+}
+
+
 interface MarkdownProps {
   content: string
   className?: string
   /** Скрывать markdown во время стрима нельзя: рендерим как есть */
   compact?: boolean
+  /** Нормализованный текст фрагмента, который читает озвучка (задача 06). */
+  highlight?: string | null
 }
 
 /**
  * Markdown-рендер ответа модели: GFM + подсветка кода.
  * memo — чтобы длинные сообщения не перерисовывались при каждом кадре стрима.
  */
-export const Markdown = memo(function Markdown({ content, className, compact }: MarkdownProps) {
+export const Markdown = memo(function Markdown({ content, className, compact, highlight }: MarkdownProps) {
+  // Набор компонентов меняем только при смене фрагмента: подсветка идёт по
+  // абзацам, а не по словам, так что перерисовок мало.
+  const rendered = useMemo(
+    () => (highlight ? componentsWithHighlight(highlight) : components),
+    [highlight],
+  )
   return (
     <div className={cn('chat-md text-neutral-800 dark:text-neutral-100', compact && 'text-sm', className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
-        components={components}
+        components={rendered}
       >
         {content}
       </ReactMarkdown>

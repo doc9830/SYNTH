@@ -32,6 +32,11 @@
   и рядом «одним файлом», в меню «⋮» — «Поделиться чатом (.md)». Файлы пишутся в кэш приложения
   и уходят в системный sheet «Поделиться» (Telegram, Drive, почта) через `@capacitor/filesystem`
   + `@capacitor/share`; в браузере — Web Share API или скачивание. Разрешения не запрашиваются.
+- **Озвучка ответов системным TTS**: кнопка «Озвучить» у ответа ассистента читает текст по абзацам
+  (блоки кода пропускаются), читаемый фрагмент подсвечивается, «Стоп» обрывает чтение в пределах
+  абзаца. Голос — системный, русский по умолчанию, офлайн; в браузере — `speechSynthesis`.
+  Если движка или русского голоса нет, кнопки нет — вместо неё один раз показывается пояснение.
+  Разрешения не нужны, микрофон не используется.
 - Вложения-изображения (для vision-моделей), выбор и загрузка моделей списком из `/v1/models`
   (если провайдер отдаёт `pricing`, рядом видна цена за 1M токенов). Принимает ли модель картинки,
   приложение решает по id (например, `deepseek-v4.1-flash`, `qwen3-vl-*`, `gpt-4o`, `claude-*`),
@@ -183,8 +188,8 @@ src/
                   ThinkingPanel, UpdateDialog, …
 server/           локальный backend: proxy-режим, поиск, чтение страниц (headless Chrome)
 scripts/          brand.mjs (логотип), gen-icons, gen-android-assets, mock-openai
-checks/           смоук-проверки логики (tsx): features, memory, calculator, context, anthropic, vision, share — npm run checks
-android/          Capacitor-проект: MainActivity, UpdaterPlugin, ассеты, подпись
+checks/           смоук-проверки логики (tsx): features, memory, secrets, tts, calculator, context, anthropic, vision, share, stream, network, db — npm run checks
+android/          Capacitor-проект: MainActivity, UpdaterPlugin, FilesPlugin, TtsPlugin, ассеты, подпись
 ```
 
 ## Android
@@ -194,7 +199,7 @@ npm run android:apk        # debug APK  → android/app/build/outputs/apk/debug/
 npm run android:release    # release APK → android/app/build/outputs/apk/release/
 ```
 
-- `applicationId`: `app.synth.hub`, название — SYNTH, версия — `1.5.1` (`android/app/build.gradle`).
+- `applicationId`: `app.synth.hub`, название — SYNTH, версия — `1.6.0` (`android/app/build.gradle`).
 - Знак приложения — минималистичная монограмма «S» на графитовом фоне: `scripts/brand.mjs` → `npm run brand`
   (PWA-иконки, `mipmap-*`, `ic_launcher_foreground`, сплэши).
 - Подпись релиза: `android/keystore.properties` + `android/synth-release.jks` (оба в `.gitignore`).
@@ -238,6 +243,7 @@ npm run android:release    # release APK → android/app/build/outputs/apk/relea
 - [x] Живой стриминг, мысли под катом и фазовые статусы.
 - [x] Инструменты: поиск, чтение страниц, генерация изображений, калькулятор, время, история чатов.
 - [x] Долговременная память на устройстве и включение функций прямо из чата.
+- [x] Озвучка ответов системным TTS (Android `TextToSpeech`, в браузере — `speechSynthesis`).
 - [x] Android APK, подписанные релизы и обновление из приложения.
 - [ ] Автоскриншоты страниц без локального backend (Cloudflare Worker + headless Chrome).
 - [ ] Синхронизация чатов между устройствами (шифрованный экспорт/импорт).

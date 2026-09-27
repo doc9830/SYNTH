@@ -1,7 +1,7 @@
 {
   "name": "synth",
   "private": true,
-  "version": "1.6.1",
+  "version": "1.7.0",
   "type": "module",
   "description": "SYNTH — Synthetic Neural & Tool Hub: универсальный чат-клиент для любого OpenAI-совместимого API (поиск, чтение страниц, картинки, долговременная память)",
   "scripts": {

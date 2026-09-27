@@ -127,12 +127,20 @@ npm run android:assets   # mipmap-*/ic_launcher*, drawable-*/splash.png
 JS-обёртка — `src/lib/files.ts` (`saveTextFile`, `saveImageFile`): в APK вызывается плагин,
 в браузере — обычное скачивание.
 
-## Озвучка ответов (SynthTts)
+## Речь: озвучка и распознавание (SynthSpeech)
 
-Локальный плагин `android/app/src/main/java/app/synth/hub/TtsPlugin.java` (регистрируется в
-`MainActivity`) поверх системного `android.speech.tts.TextToSpeech`. JS-обёртка —
-`src/lib/tts.ts`, состояние и очередь — `src/lib/useSpeech.ts`, разбор markdown на фрагменты —
-`src/lib/ttsText.ts`.
+Локальный плагин `android/app/src/main/java/app/synth/hub/SpeechPlugin.java` (регистрируется в
+`MainActivity`) построен на системных средствах речи Android: `android.speech.tts.TextToSpeech`
+для озвучки и `android.speech.SpeechRecognizer` для голосового ввода. Сторонних моделей, облачных
+STT и скачиваемых весов нет — движки берутся у системы. До 1.7.0 плагин назывался `SynthTts`
+(`TtsPlugin.java`) и умел только озвучку.
+
+Озвучка: JS-обёртка — `src/lib/tts.ts`, состояние и очередь — `src/lib/useSpeech.ts`, разбор
+markdown на фрагменты — `src/lib/ttsText.ts`.
+Голосовой ввод: `src/lib/asr.ts` (платформенный слой и тексты), `src/lib/nativeAsr.ts` (мост),
+состояние записи — `src/lib/useDictation.ts`, кнопка — `src/ui/Composer.tsx`.
+
+### Синтез речи (TextToSpeech)
 
 | Метод | Что делает |
 | --- | --- |
@@ -144,9 +152,29 @@ JS-обёртка — `src/lib/files.ts` (`saveTextFile`, `saveImageFile`): в A
 Коды причин: `ENGINE_UNAVAILABLE` (движка нет), `ENGINE_TIMEOUT` (не ответил за 6 с),
 `NO_RU_VOICE` (нет голоса для локали `ru`).
 
+### Распознавание речи (SpeechRecognizer)
+
+| Метод | Что делает |
+| --- | --- |
+| `asrAvailable()` | есть ли сервис распознавания: `{available, reason?, onDevice?, language?, permission?}` |
+| `requestMic()` | запрашивает `RECORD_AUDIO` при первом использовании (системный диалог) |
+| `startRecognize({lang, silenceMs})` | начинает сессию записи, шлёт события `recognize` |
+| `stopRecognize()` | заканчивает запись: система отдаёт итоговый текст (`final`) |
+| `cancelRecognize()` | обрывает запись, результат выбрасывается (`cancelled`) |
+
+События `recognize` (`state`): `ready`, `speech`, `partial` (частичный текст — показывается в поле
+ввода сразу), `silence`, `final`, `error` (`NO_MATCH`, `SILENCE`, `NETWORK`, `PERMISSION_DENIED`,
+`BUSY`, `AUDIO`, `SERVER`, `NO_START`, `NO_RESULT`), `cancelled` (`reason: user` или `lifecycle`).
+
+Как выбирается движок: на API 31+ — `createOnDeviceSpeechRecognizer()`, если
+`isOnDeviceRecognitionAvailable()` подтверждает офлайн-пакет (распознавание офлайн); на более
+старых версиях — обычный системный сервис с `EXTRA_PREFER_OFFLINE`, который может уйти в облако
+(приложение предупреждает об этом один раз). Язык — `ru-RU`, автостоп по тишине — 1100 мс.
+
 Что важно знать по устройству плагина:
 
-- **Разрешения не нужны**, микрофон не используется, аудио никуда не отправляется. Голос берётся из
+- **Озвучке разрешения не нужны**, аудио никуда не отправляется; микрофон она не использует — его
+  берёт только голосовой ввод (разрешение `RECORD_AUDIO`, см. ниже). Голос берётся из
   установленных на устройстве; среди русских предпочитается голос без `isNetworkConnectionRequired()`
   (офлайн). Если русский голос только сетевой — приложение предупреждает об этом один раз и не блокирует.
 - **`<queries>` для `android.intent.action.TTS_SERVICE`** в `AndroidManifest.xml` обязателен на
@@ -169,6 +197,27 @@ JS-обёртка — `src/lib/files.ts` (`saveTextFile`, `saveImageFile`): в A
 - **Голос ищется сначала в списке `getVoices()`** (офлайновый предпочтительнее сетевого), и только
   если русского голоса нет вовсе — `NO_RU_VOICE`. Это важно: на телефонах без скачанных офлайн-данных
   `isLanguageAvailable(ru)` отвечает `LANG_MISSING_DATA`, хотя сетевой русский голос читает нормально.
+- **Один локальный плагин на оба движка** (`SynthSpeech`): методы озвучки и распознавания живут в
+  одном классе, `MainActivity` регистрирует его один раз. JS-мосты разделены (`nativeTts.ts`,
+  `nativeAsr.ts`) — так у каждой задачи свои состояния и своя диагностика.
+- **Запись просит разрешение при первом использовании** (`requestMic` → `RECORD_AUDIO`): при отказе
+  показывается понятное сообщение со ссылкой на настройки, а текстовый ввод продолжает работать.
+  Слушатель событий `recognize` снимается в конце сессии — «висит» он не дольше самой записи.
+- **`<queries>` для `android.speech.RecognitionService`** обязателен на Android 11+ (API 30): без
+  этой записи `SpeechRecognizer.isRecognitionAvailable()` отвечает false, хотя сервис распознавания
+  на устройстве есть, и голосовой ввод молча считался бы недоступным.
+- **Распознанный текст только вставляется в поле ввода**: автоотправки нет — сообщение уходит
+  отдельным действием пользователя. Частичные результаты (`partial`) показываются сразу, готовый
+  текст заменяет их при `final`, а результат отменённой сессии выбрасывается. Записи не пишутся на
+  диск и никуда не отправляются: аудио обрабатывает сервис Android, приложение его не хранит.
+- **Запись прерывается при уходе в фон** (`onAppPause()` в `src/App.tsx` → `release()` в
+  `useDictation.ts`): микрофон не остаётся работать в кармане, а уже распознанный текст остаётся в
+  поле ввода. На нативной стороне те же `handleOnPause`/`handleOnStop`/`handleOnDestroy` вызывают
+  `destroyRecognizer()` — по документации это единственный корректный способ освободить микрофон.
+- **Нет сервиса распознавания — нет и кнопки**: на де-Гугленных прошивках и части китайских ромов
+  кнопка микрофона не рисуется вовсе, текстовый ввод работает как раньше. В браузере её тоже нет:
+  системного `SpeechRecognizer` там не существует, а `SpeechRecognition` работает через облако —
+  облачные STT запрещены ограничениями задачи.
 - **Строка кнопок у сообщения на телефоне видна всегда** (`@media (hover: none)` для класса
   `msg-actions` в `index.css`): на тач-экране наведения курсора нет, и «Озвучить»/«Копировать»/
   «Поделиться» иначе остаются невидимыми.
@@ -218,12 +267,12 @@ JS-обёртка — `src/lib/files.ts` (`saveTextFile`, `saveImageFile`): в A
 
 ```bash
 # 1. версия веб-бандла (попадает в appInfo → APP_VERSION)
-#    package.json → "version": "1.6.0"
+#    package.json → "version": "1.7.0"
 # 2. версия пакета
-#    android/app/build.gradle → versionCode 10, versionName "1.6.0"
+#    android/app/build.gradle → versionCode 12, versionName "1.7.0"
 npm run android:release
-cp android/app/build/outputs/apk/release/app-release.apk synth-v1.6.0.apk
-# 3. GitHub → Releases → Draft a new release: tag v1.6.0, приложить synth-v1.6.0.apk
+cp android/app/build/outputs/apk/release/app-release.apk synth-v1.7.0.apk
+# 3. GitHub → Releases → Draft a new release: tag v1.7.0, приложить synth-v1.7.0.apk
 ```
 
 После публикации релиза приложения на телефонах увидят обновление при следующем запуске.

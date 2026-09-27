@@ -1,3 +1,4 @@
+import { redactSecrets } from '@/lib/redact'
 import { parseRetryAfter } from './retry'
 
 /**
@@ -176,4 +177,29 @@ export function formatApiError(err: ApiError): string {
   const lines = [err.message]
   if (err.hint) lines.push(err.hint)
   return lines.join('\n\n')
+}
+
+/**
+ * Текст и подробности ошибки для сообщения в чате — без секретов.
+ *
+ * `details` — это тело ответа провайдера, `message` — текст от провайдера или
+ * из браузера: и то и другое может содержать ключ (например, шлюз вернул
+ * запрос обратно или сообщение содержит URL с токеном). Сообщение об ошибке
+ * остаётся в чате и уходит в экспорт, поэтому чистим на входе, а не в UI.
+ */
+export function turnErrorForChat(err: ApiError): { error: string; errorDetails: string } {
+  const details = JSON.stringify(
+    {
+      status: err.status,
+      endpoint: err.endpoint,
+      code: err.code,
+      details: err.details,
+    },
+    null,
+    2,
+  )
+  return {
+    error: redactSecrets(formatApiError(err)),
+    errorDetails: redactSecrets(details),
+  }
 }

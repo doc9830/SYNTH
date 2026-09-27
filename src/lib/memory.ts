@@ -9,7 +9,9 @@ import {
   replaceMemoriesInDB,
 } from './db'
 import { debugLog } from './debug'
+import { redactSecrets } from './redact'
 import type { Settings } from './settings'
+import { stemTokens } from './stemRu'
 import { uid } from './utils'
 
 /**
@@ -24,17 +26,19 @@ import { uid } from './utils'
  *      · авто-извлечение: после ответа отдельный нестримовый запрос просит
  *        модель вытащить устойчивые факты из последних сообщений.
  *      Все три канала идут через `add()` — он дедуплицирует по сходству
- *      (Jaccard по значимым токенам) и объединяет близкие записи.
+ *      (Jaccard по основам слов + вложение короткого факта в подробный)
+ *      и объединяет близкие записи.
  *
  *   2. ЧТЕНИЕ. Перед запросом к модели считается блок памяти:
  *      закреплённые записи + самые релевантные текущему сообщению
- *      (пересечение токенов + свежесть + частота использования), с жёстким
+ *      (пересечение основ слов + свежесть + частота использования), с жёстким
  *      лимитом символов. Блок приклеивается к системному промпту.
  *      Плюс инструменты `recall` (поиск по памяти) и `forget`.
  *
  *   3. ГРАНИЦЫ. Память живёт только в IndexedDB устройства. Записи похожие на
  *      секреты (ключи, пароли, карты) не сохраняются вообще; длинные обрезаются;
- *      есть лимит числа записей и полная очистка в UI.
+ *      есть лимит числа записей и полная очистка в UI. Экспорт памяти и дамп
+ *      дополнительно проходят через `redactSecrets` — на случай старых записей.
  */
 
 /** Максимальная длина одной записи (обрезка). */
@@ -51,8 +55,28 @@ const MAX_FACTS_PER_TURN = 6
 const AUTO_EXTRACT_MIN_INTERVAL = 60_000
 /** Из скольких последних сообщений извлекаем факты. */
 const AUTO_EXTRACT_MESSAGES = 12
-/** Порог сходства для склейки записей. */
+/**
+ * Порог сходства (Jaccard по основам слов) для склейки записей.
+ * Подобран на тестовом наборе из 28 пар в `checks/memory.check.ts`:
+ * при 0.66 лишних склеек нет; при 0.60 и ниже начинаются ложные
+ * («живёт в Казани» / «работает в Казани» — 0.50, «пишет на TypeScript» /
+ * «пишет на Python» — 0.50). Значение осталось прежним: формы слов починил
+ * стеммер, а не порог.
+ */
 const SIMILARITY_MERGE = 0.66
+/**
+ * Второе правило склейки: короткий факт целиком содержится в подробном
+ * («работает в Казани» → «работает в Казани уже год»). Такие пары дают
+ * Jaccard 0.50 и без вложенности не сливались бы.
+ */
+const CONTAINMENT_MERGE = 0.8
+/**
+ * Сколько основ должно совпасть для склейки по вложенности.
+ * Без этого «изучает Rust» и «изучает Go» сливались бы с вложенностью 1.0 —
+ * один общий токен ещё не значит «тот же факт».
+ */
+const MIN_COMMON_STEMS = 2
+
 
 /** Записи, которые нельзя хранить: там почти наверняка секрет. */
 const SECRET_RE =
@@ -91,7 +115,8 @@ function cleanTags(tags: unknown): string[] {
       .toLowerCase()
       .replace(/[^\p{L}\p{N}-]+/gu, '')
       .slice(0, MAX_TAG_CHARS)
-    if (value && !out.includes(value)) out.push(value)
+    // Тег с ключом внутри («sk-live-…») — тоже секрет: не храним и не показываем.
+    if (value && !looksLikeSecret(value) && !out.includes(value)) out.push(value)
     if (out.length >= MAX_TAGS) break
   }
   return out
@@ -103,20 +128,66 @@ function cleanKind(raw: unknown): MemoryKind {
   return KINDS.includes(raw as MemoryKind) ? (raw as MemoryKind) : 'fact'
 }
 
-/** Значимые токены: слова от 3 символов без стоп-слов. */
+/**
+ * Значимые токены: слова от 3 символов без стоп-слов, приведённые к основам.
+ * Стемминг — из-за форм одного слова: без него «погода» и «погоду» считались
+ * разными токенами, дубли фактов не склеивались, а релевантная запись
+ * не попадала в контекст (см. `src/lib/stemRu.ts`).
+ */
 export function tokenize(text: string): string[] {
-  return (text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).filter((t) => !STOP_WORDS.has(t))
+  const words = (text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).filter(
+    (t) => !STOP_WORDS.has(t),
+  )
+  return stemTokens(words)
 }
 
-/** Сходство двух записей: Jaccard по значимым токенам (0..1). */
+/** Общие основы двух наборов токенов. */
+function commonTokens(left: Set<string>, right: Set<string>): number {
+  let common = 0
+  for (const token of left) if (right.has(token)) common += 1
+  return common
+}
+
+/** Сходство двух записей: Jaccard по основам слов (0..1). */
 export function similarity(a: string, b: string): number {
   const left = new Set(tokenize(a))
   const right = new Set(tokenize(b))
   if (!left.size || !right.size) return 0
-  let common = 0
-  for (const token of left) if (right.has(token)) common += 1
+  const common = commonTokens(left, right)
   return common / (left.size + right.size - common)
 }
+
+/**
+ * Вложенность: какая доля меньшего набора основ найдена в большем (0..1).
+ * Нужна для пар вида «работает в Казани» → «работает в Казани уже год»:
+ * Jaccard у них 0.5 (короткая запись разбавлена подробностями), а вложенность 1.
+ */
+export function containment(a: string, b: string): number {
+  const left = new Set(tokenize(a))
+  const right = new Set(tokenize(b))
+  const smaller = Math.min(left.size, right.size)
+  if (!smaller) return 0
+  return commonTokens(left, right) / smaller
+}
+
+/**
+ * Решение о склейке двух фактов памяти.
+ *
+ * Два независимых правила: либо записи похожи как целое (Jaccard ≥ 0.66),
+ * либо одна целиком уточняет другую (вложенность ≥ 0.8), но при этом совпало
+ * хотя бы `MIN_COMMON_STEMS` основ — иначе «изучает Rust» и «изучает Go»
+ * (одна общая основа, вложенность 1.0) превратились бы в одну запись.
+ */
+export function shouldMerge(a: string, b: string): boolean {
+  if (similarity(a, b) >= SIMILARITY_MERGE) return true
+  const left = new Set(tokenize(a))
+  const right = new Set(tokenize(b))
+  if (!left.size || !right.size) return false
+  const common = commonTokens(left, right)
+  if (common < MIN_COMMON_STEMS) return false
+  return common / Math.min(left.size, right.size) >= CONTAINMENT_MERGE
+}
+
 
 /* ─────────────────────────── Хранилище записей ─────────────────────────── */
 
@@ -190,7 +261,7 @@ export const useMemory = create<MemoryState>((set, get) => ({
     const tags = cleanTags(input.tags)
     const entries = get().entries
     // склейка близких записей: обновляем более подробную формулировку
-    const twin = entries.find((e) => similarity(e.text, text) >= SIMILARITY_MERGE)
+    const twin = entries.find((e) => shouldMerge(e.text, text))
     const now = Date.now()
 
     if (twin) {
@@ -524,10 +595,26 @@ export async function autoExtractMemories(input: {
 
 /* ───────────────────────────── Экспорт и статистика ───────────────────── */
 
+/**
+ * Запись для экспорта: текст и теги проходят через `redactSecrets`.
+ *
+ * Память и так не принимает записи с ключами (`looksLikeSecret`), но в базе
+ * могли остаться записи, сохранённые прошлыми версиями приложения. Экспорт —
+ * это файл, который уходит из приложения (мессенджер, облако, почта),
+ * поэтому проверяем ещё раз на выходе.
+ */
+function exportableEntry(entry: MemoryEntry): MemoryEntry {
+  return {
+    ...entry,
+    text: redactSecrets(entry.text),
+    tags: entry.tags.map((tag) => redactSecrets(tag)),
+  }
+}
+
 /** Память → Markdown (экспорт из UI). */
 export function memoriesToMarkdown(entries: MemoryEntry[] = useMemory.getState().entries): string {
   const lines = ['# Память SYNTH', '', `Записей: ${entries.length}`, '']
-  for (const entry of entries) {
+  for (const entry of entries.map(exportableEntry)) {
     lines.push(`- ${entry.pinned ? '📌 ' : ''}${entry.text}`)
     const meta = [entry.kind, new Date(entry.updatedAt).toLocaleDateString('ru-RU')]
     if (entry.tags.length) meta.push(entry.tags.map((t) => `#${t}`).join(' '))
@@ -580,10 +667,68 @@ export function parseMemoryDump(raw: string): MemoryEntry[] {
   return out
 }
 
-/** Полный дамп памяти для экспорта/бэкапа. */
+/** Полный дамп памяти для экспорта/бэкапа. Как и Markdown, без секретов. */
 export function memoryDump(entries: MemoryEntry[] = useMemory.getState().entries): string {
-  return JSON.stringify(entries, null, 2)
+  return JSON.stringify(entries.map(exportableEntry), null, 2)
 }
+
+/* ─────────────────────── Отчёт по дублям (без удаления) ─────────────────── */
+
+export interface MemoryDuplicatePair {
+  /** Запись, которая «победила»: она осталась бы после склейки */
+  master: string
+  /** Запись, которая слилась бы в неё */
+  merged: string
+  /** Jaccard по основам слов */
+  score: number
+  /** Вложенность (доля основ меньшей записи, найденных в большей) */
+  containment: number
+}
+
+export interface MemoryDuplicateReport {
+  entries: number
+  /** Сколько записей осталось бы после склейки */
+  kept: number
+  /** Сколько записей слилось бы (entries - kept) */
+  merged: number
+  pairs: MemoryDuplicatePair[]
+}
+
+/**
+ * Отчёт «сколько записей схлопнулось бы» — только чтение, ничего не удаляет.
+ *
+ * Проход жадный, как в `add()`: запись сливается с первой подходящей записью
+ * из уже пройденных. Это модель того, что произошло бы при повторном добавлении
+ * тех же фактов, — по ней видно, сколько дублей накопила реальная память.
+ */
+export function memoryDuplicateReport(
+  entries: MemoryEntry[] = useMemory.getState().entries,
+): MemoryDuplicateReport {
+  const kept: MemoryEntry[] = []
+  const pairs: MemoryDuplicatePair[] = []
+
+  for (const entry of entries) {
+    const hostIndex = kept.findIndex((candidate) => shouldMerge(candidate.text, entry.text))
+    if (hostIndex < 0) {
+      kept.push(entry)
+      continue
+    }
+    const host = kept[hostIndex]
+    // «Победителем» остаётся более подробная формулировка — как в add().
+    const master = entry.text.length > host.text.length ? entry : host
+    const merged = master === host ? entry : host
+    pairs.push({
+      master: master.text,
+      merged: merged.text,
+      score: similarity(master.text, merged.text),
+      containment: containment(master.text, merged.text),
+    })
+    kept[hostIndex] = master
+  }
+
+  return { entries: entries.length, kept: kept.length, merged: pairs.length, pairs }
+}
+
 
 /** Подписи видов записей — для UI. */
 export const MEMORY_KIND_LABELS: Record<MemoryKind, string> = {

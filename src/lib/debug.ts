@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { maskKey } from './utils'
+import { redactDeep } from './redact'
 
 export type DebugKind = 'request' | 'response' | 'error' | 'tool' | 'info'
 
@@ -13,25 +13,21 @@ export interface DebugEntry {
 
 const MAX_ENTRIES = 40
 
-/** Убирает секреты из любых данных, попадающих в Debug Console. */
+/**
+ * Убирает секреты из любых данных, попадающих в Debug Console.
+ *
+ * Раньше здесь вырезались только `sk-…`-строки и значения по именам полей,
+ * поэтому ключ в URL (`?api_key=…`), в заголовке (`Authorization: Bearer …`)
+ * или внутри тела ответа провайдера доходил до экрана отладки целиком.
+ * Теперь используется общий `redactDeep` из `src/lib/redact.ts`: он знает
+ * про формы ключей (sk-, sk-ant-, AIza…, Bearer…), про пары `key=value`
+ * и про токены в query-строке. Значения по именам полей показываются
+ * в виде `sk-…abcd` — этого достаточно, чтобы отличить один ключ от другого.
+ */
 export function sanitize(value: unknown): unknown {
-  if (typeof value === 'string') {
-    return value.replace(/sk-[A-Za-z0-9_\-*.]{4,}/g, (m) => maskKey(m))
-  }
-  if (Array.isArray(value)) return value.map(sanitize)
-  if (value && typeof value === 'object') {
-    const out: Record<string, unknown> = {}
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      if (/^(api[-_]?key|authorization|x-api-key|token|key)$/i.test(k)) {
-        out[k] = maskKey(String(v ?? ''))
-      } else {
-        out[k] = sanitize(v)
-      }
-    }
-    return out
-  }
-  return value
+  return redactDeep(value)
 }
+
 
 function serialize(value: unknown): string {
   const clean = sanitize(value)

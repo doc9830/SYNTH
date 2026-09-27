@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 import type { ChatMessage, ImageAttachment } from '@/types'
+import { turnErrorForChat } from '@/providers/openai/errors'
 import {
   continuationModeFor,
   rememberContinuationMode,
@@ -301,21 +302,9 @@ export function useChat() {
         model: result.model ?? settings.model,
         usage: result.usage !== undefined ? result.usage : undefined,
         status,
-        error: result.error
-          ? [result.error.message, result.error.hint].filter(Boolean).join('\n\n')
-          : undefined,
-        errorDetails: result.error
-          ? JSON.stringify(
-              {
-                status: result.error.status,
-                endpoint: result.error.endpoint,
-                code: result.error.code,
-                details: result.error.details,
-              },
-              null,
-              2,
-            )
-          : undefined,
+        // Текст ошибки и подробности чистим от ключей: провайдер может вернуть
+        // запрос или URL с токеном, а сообщение остаётся в чате и уходит в экспорт.
+        ...(result.error ? turnErrorForChat(result.error) : { error: undefined, errorDetails: undefined }),
       }
       draftRef.current = draft
       try {

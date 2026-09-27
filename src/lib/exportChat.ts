@@ -1,4 +1,5 @@
 import type { ChatMessage, Conversation } from '@/types'
+import { redactSecrets } from './redact'
 
 function toolLine(m: ChatMessage): string {
   const calls = m.toolCalls ?? []
@@ -6,7 +7,14 @@ function toolLine(m: ChatMessage): string {
   return calls.map((c) => `- ${c.name}: ${c.summary ?? c.status}`).join('\n')
 }
 
-/** Чат → Markdown (для экспорта и «копировать целиком»). */
+/**
+ * Чат → Markdown (для экспорта и «копировать целиком»).
+ *
+ * Текст прогоняется через `redactSecrets`: в переписке может оказаться ключ,
+ * который пользователь сам вставил в сообщение (или который провайдер вернул
+ * в тексте ошибки). Копирование и сохранение в файл — это выход из приложения,
+ * поэтому наружу ключи не отдаём.
+ */
 export function conversationToMarkdown(conversation: Conversation, messages: ChatMessage[]): string {
   const lines: string[] = [
     `# ${conversation.title}`,
@@ -25,7 +33,7 @@ export function conversationToMarkdown(conversation: Conversation, messages: Cha
     if (m.error) lines.push(`> Ошибка: ${m.error}`, '')
   }
 
-  return lines.join('\n')
+  return redactSecrets(lines.join('\n'))
 }
 
 /** Скачивание текстового файла без обращений к серверу. */

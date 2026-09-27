@@ -8,17 +8,23 @@
 import {
   MEMORY_KIND_LABELS,
   buildMemoryContext,
+  containment,
   looksLikeSecret,
   memoryDump,
+  memoryDuplicateReport,
   memoryStats,
   memoriesToMarkdown,
   parseFacts,
   parseMemoryDump,
   parseRememberCommand,
   searchMemory,
+  shouldMerge,
+  similarity,
+  tokenize,
   useMemory,
   type AddMemoryInput,
 } from '@/lib/memory'
+import { stemRu } from '@/lib/stemRu'
 import { DEFAULT_SETTINGS, type Settings } from '@/lib/settings'
 import { check, finish } from './harness'
 
@@ -101,7 +107,117 @@ check('извлечён только годный факт', facts.length === 1 
 check('теги факта нормализованы', facts[0].tags.length === 1)
 check('мусорный ответ модели не ломает разбор', parseFacts('никакого массива').length === 0)
 
-// 7. очистка
+// 7. морфология: формы одного слова — не разные факты
+check('стеммер: падежи одного слова дают одну основу', stemRu('погоду') === stemRu('погода'))
+check('стеммер: глаголы приводятся к общей основе', stemRu('работает') === stemRu('работать') && stemRu('работать') === stemRu('работа'))
+check('стеммер: «ё» и «е» не создают разные слова', stemRu('живёт') === stemRu('живет'))
+check('стеммер: короткие слова не режутся', stemRu('кофе') === 'кофе' && stemRu('год') === 'год')
+check('стеммер: латиница не трогается', stemRu('TypeScript') === 'typescript')
+check(
+  'токенизация даёт одну основу для «погода»/«погоду»',
+  tokenize('погода в Казани').join(' ') === tokenize('погоду в Казани').join(' '),
+)
+check('вложенность короткого факта считается', containment('работает в Казани', 'работает в Казани уже год') === 1)
+check('сходство одинаковых фраз — 1', similarity('какая погода в Казани', 'какая погода в Казани') === 1)
+
+// Поиск по памяти идёт по основам: запрос «погода» находит запись про «погоду».
+const probeBefore = entries()
+useMemory.setState({
+  entries: [
+    ...probeBefore,
+    { ...probeBefore[0], id: 'probe-weather', text: 'пользователь следит за погодой в Казани', tags: [] },
+  ],
+})
+check('поиск находит запись по другой форме слова', searchMemory('погода').some((e) => e.id === 'probe-weather'))
+useMemory.setState({ entries: probeBefore })
+
+/**
+ * Тестовый набор пар фактов для порогов склейки (задача 05.1).
+ * Левая часть — запись в памяти, правая — новый факт; `true` = должны слиться.
+ * Набор фиксирует пороги (`SIMILARITY_MERGE` 0.66 и `CONTAINMENT_MERGE` 0.8
+ * с минимум двумя общими основами): при 0.60 и ниже появляются лишние склейки
+ * («живёт в Казани» / «работает в Казани» — Jaccard 0.50), а без вложенности
+ * не сливались уточнения («работает в Казани» / «работает в Казани уже год»).
+ * Реальную память по этому правилу считает `npm run memory:dupes`.
+ */
+const MERGE_CASES: Array<[string, string, boolean]> = [
+  ['работает в Казани', 'работает в Казани уже год', true],
+  ['пользователь живёт в Казани', 'пользователь живет в казани', true],
+  ['предпочитает короткие ответы', 'предпочитает короткие ответы на русском', true],
+  ['пишет код на TypeScript', 'пишет код на TypeScript и Rust', true],
+  ['предпочитает краткие ответы', 'предпочитает краткие ответы без воды', true],
+  ['работает удалённо', 'работает удалённо из дома', true],
+  ['читает книги', 'читает книги по вечерам', true],
+  ['люблю кофе', 'люблю кофе и собак', true],
+  ['учит английский язык', 'учит английский язык каждый день', true],
+  ['любит кофе', 'любит собак', false],
+  ['работает программистом', 'отдыхает на даче', false],
+  ['пишет на TypeScript', 'пишет на Python', false],
+  ['пользователь живёт в Казани', 'пользователь живёт в Москве', false],
+  ['проект называется SYNTH', 'проект называется Другое', false],
+  ['использует Android', 'использует iOS', false],
+  ['любит тёмную тему', 'любит светлую тему', false],
+  ['у пользователя есть кот', 'у пользователя есть собака', false],
+  ['работает в Казани', 'живёт в Казани', false],
+  ['изучает Rust', 'изучает Go', false],
+  ['говорит по-русски', 'говорит по-английски', false],
+  ['фронтенд на React', 'бэкенд на Node', false],
+  ['сервер в Финляндии', 'сервер в Германии', false],
+  ['пользуется DeepSeek', 'пользуется OpenAI', false],
+  ['у него аллергия на пыль', 'у него аллергия на пыльцу', false],
+  ['занимается спортом', 'занимается музыкой', false],
+  ['живёт в Казани', 'работал в Казани', false],
+  ['дом в деревне', 'дача в деревне', false],
+  ['пьёт чай без сахара', 'пьёт кофе без сахара', false],
+]
+
+const missedMerges: string[] = []
+const wrongMerges: string[] = []
+for (const [a, b, expected] of MERGE_CASES) {
+  if (shouldMerge(a, b) === expected) continue
+  const score = `Jaccard ${similarity(a, b).toFixed(2)}, вложенность ${containment(a, b).toFixed(2)}`
+  if (expected) missedMerges.push(`«${a}» ~ «${b}» (${score})`)
+  else wrongMerges.push(`«${a}» ~ «${b}» (${score})`)
+}
+/** Печатает проблемные пары и говорит, прошла ли проверка. */
+function mergeSetReport(lines: string[]): boolean {
+  if (lines.length) console.log(lines.join('\n'))
+  return lines.length === 0
+}
+
+const mergeCases = MERGE_CASES.filter(([, , expected]) => expected).length
+check(`уточнения сливаются (${mergeCases} пар из набора)`, mergeSetReport(missedMerges))
+check(`разные факты не сливаются (${MERGE_CASES.length - mergeCases} пар из набора)`, mergeSetReport(wrongMerges))
+check(
+  'форма одного слова больше не даёт дубль, но разные факты не склеиваются',
+  !shouldMerge('пользователь живёт в Казани и работает в Яндексе', 'пользователь живёт в Казани и учится в КФУ'),
+)
+
+// 8. отчёт по дублям: считаем, но ничего не удаляем
+const duplicateReport = memoryDuplicateReport([
+  ...entries(),
+  { ...entries()[0], id: 'dup-1', text: 'Пользователь живёт в Казани и работает программистом давно' },
+  { ...entries()[1], id: 'dup-2', text: 'Пользователь предпочитает короткие ответы' },
+])
+check('отчёт по дублям видит склейки', duplicateReport.merged === 2 && duplicateReport.kept === 2)
+check('отчёт по дублям не удаляет записи', entries().length === 2)
+check('отчёт по дублям перечисляет пары с оценками', duplicateReport.pairs.every((p) => p.score > 0))
+
+// 9. экспорт памяти: секреты вырезаются, даже если запись пришла из старой версии
+const legacyEntry = {
+  ...entries()[0],
+  id: 'legacy',
+  text: 'ключ доступа sk-live-1234567890 остался от старой версии',
+  tags: ['sk-ant-abcdefghijklmnop'],
+}
+const legacyMd = memoriesToMarkdown([legacyEntry])
+const legacyJson = memoryDump([legacyEntry])
+check('экспорт памяти в .md без ключа в тексте', !legacyMd.includes('sk-live-1234567890'))
+check('экспорт памяти в .md без ключа в тегах', !legacyMd.includes('sk-ant-abcdefghijklmnop'))
+check('экспорт памяти в .json без ключей', !legacyJson.includes('sk-live-1234567890') && !legacyJson.includes('sk-ant-abcdefghijklmnop'))
+check('экспорт памяти остаётся валидным JSON', parseMemoryDump(legacyJson).length === 1)
+
+// 10. очистка
 try {
   await useMemory.getState().clear()
 } catch {

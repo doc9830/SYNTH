@@ -16,6 +16,7 @@ import { Share } from '@capacitor/share'
 import type { ChatMessage, Conversation } from '@/types'
 import { downloadText } from './exportChat'
 import { isNativeApp } from './nativeShell'
+import { redactSecrets } from './redact'
 
 /** Папка экспорта внутри кэша приложения. За её пределы писать нельзя. */
 export const EXPORTS_DIR = 'exports'
@@ -271,16 +272,12 @@ export function joinFilesToMarkdown(files: ShareFile[], name: string): ShareFile
   return { name, content: `${body}\n` }
 }
 
-/** Убирает из экспорта то, что наружу отдавать нельзя: ключи и токены. */
-export function redactSecrets(text: string): string {
-  return text
-    .replace(/\bsk-[A-Za-z0-9_-]{8,}/g, 'sk-***')
-    .replace(/\bBearer\s+[A-Za-z0-9._-]{8,}/gi, 'Bearer ***')
-    .replace(
-      /("?\b(?:api[_-]?key|apikey|authorization|access[_-]?token|refresh[_-]?token|token|password|secret)\b"?\s*[:=]\s*"?)([^"'\s,;}]{4,})/gi,
-      '$1***',
-    )
-}
+/**
+ * Убирает из экспорта то, что наружу отдавать нельзя: ключи и токены.
+ * Логика живёт в `src/lib/redact.ts`: те же правила применяются к дампу памяти,
+ * Debug Console и текстам ошибок в чате.
+ */
+export { redactSecrets }
 
 
 

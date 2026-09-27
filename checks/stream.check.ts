@@ -27,7 +27,7 @@ function message(id: string, role: ChatMessage['role'], content: string): ChatMe
   return { id, role, createdAt: 1, content, status: 'complete' }
 }
 
-function conversation(id: string, count: number, updatedAt: number): Conversation {
+function messagesOf(id: string, count: number): ChatMessage[] {
   const messages: ChatMessage[] = []
   for (let i = 0; i < count; i++) {
     messages.push(message(`${id}-m${i}`, i % 2 ? 'assistant' : 'user', `сообщение ${i}`))
@@ -39,6 +39,11 @@ function conversation(id: string, count: number, updatedAt: number): Conversatio
     content: '',
     status: 'streaming',
   })
+  return messages
+}
+
+/** Обёртка чата: без сообщений — они лежат отдельным списком (схема 3). */
+function conversation(id: string, count: number, updatedAt: number): Conversation {
   return {
     id,
     title: `чат ${id}`,
@@ -46,7 +51,8 @@ function conversation(id: string, count: number, updatedAt: number): Conversatio
     updatedAt,
     pinned: false,
     model: 'deepseek-flash',
-    messages,
+    preview: `сообщение ${count - 1}`,
+    messageCount: count + 1,
   }
 }
 
@@ -56,19 +62,15 @@ const ORDER = (a: Conversation, b: Conversation): number => {
   return b.updatedAt - a.updatedAt
 }
 
-/** Прежний путь: каждый кадр — новый массив сообщений, новый чат и пересортировка списка. */
-function legacyFrame(conversationId: string, messageId: string, content: string): void {
+/**
+ * Прежний путь: каждый кадр — новая ссылка чата и пересортировка списка.
+ * Реплика того, что делал `setMessages` на каждый чанк; нужна только для
+ * метрики «до», поэтому пишем прямо в стор (без обращения к базе).
+ */
+function legacyFrame(conversationId: string, content: string): void {
   useConversations.setState((s) => ({
     conversations: s.conversations
-      .map((c) =>
-        c.id === conversationId
-          ? {
-              ...c,
-              updatedAt: Date.now(),
-              messages: c.messages.map((m) => (m.id === messageId ? { ...m, content } : m)),
-            }
-          : c,
-      )
+      .map((c) => (c.id === conversationId ? { ...c, updatedAt: Date.now(), preview: content } : c))
       .sort(ORDER),
   }))
 }
@@ -83,7 +85,7 @@ function countNotifications(frames: number): { notifications: number; identityCh
     if (s.conversations !== before) identityChanges++
   })
   try {
-    for (let i = 0; i < frames; i++) legacyFrame('conv-a', 'conv-a-stream', `текст ${i}`)
+    for (let i = 0; i < frames; i++) legacyFrame('conv-a', `текст ${i}`)
   } finally {
     unsubscribe()
   }
@@ -94,7 +96,12 @@ function countNotifications(frames: number): { notifications: number; identityCh
 
 const longChat = conversation('conv-a', 120, 5_000)
 const otherChat = conversation('conv-b', 8, 4_000)
-useConversations.setState({ conversations: [longChat, otherChat], activeId: 'conv-a', loaded: true })
+useConversations.setState({
+  conversations: [longChat, otherChat],
+  messages: { 'conv-a': messagesOf('conv-a', 120), 'conv-b': messagesOf('conv-b', 8) },
+  activeId: 'conv-a',
+  loaded: true,
+})
 
 const baseline = useConversations.getState().conversations
 const baselineChat = baseline[0]
@@ -131,7 +138,10 @@ check('ссылка conversations не менялась за стрим', stream
 check('ссылка активного чата не менялась за стрим', after[0] === baselineChat)
 check('updatedAt чата не менялся (значит, и сортировки не было)', after[0].updatedAt === baselineUpdatedAt)
 check('все кадры дошли до подписчика сообщения', published === FRAMES)
-check('в стор чатов по-прежнему пустой стримящийся блок', after[0].messages.at(-1)?.content === '')
+check(
+  'в списке сообщений по-прежнему пустой стримящийся блок',
+  useConversations.getState().messages['conv-a'].at(-1)?.content === '',
+)
 
 /* ─────────────── 2. подписка на кадр: только своё сообщение ─────────────── */
 
@@ -154,7 +164,10 @@ check('новый кадр — новая ссылка (рендер тольк�
 
 /* ─────────────── 3. слияние кадра в сообщение (как в MessageItem) ─────────────── */
 
-const merged: ChatMessage = { ...after[0].messages.at(-1)!, ...patchNew }
+const merged: ChatMessage = {
+  ...useConversations.getState().messages['conv-a'].at(-1)!,
+  ...patchNew,
+}
 check('слияние кадра даёт текст', merged.content === 'новый кадр')
 check(
   'слияние кадра не теряет id и роль сообщения',

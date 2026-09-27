@@ -1,4 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react'
+import { attachmentSrc } from '@/lib/attachments'
 import { copyText } from '@/lib/clipboard'
 import { exportMarkdown, filesFromMarkdown, joinedFileFromMarkdown, slugify } from '@/lib/shareFiles'
 import { describeStreamPhase } from '@/lib/streamPhase'
@@ -165,7 +166,7 @@ function UserMessage({
             {attachments.map((a) => (
               <img
                 key={a.id}
-                src={a.dataUrl}
+                src={attachmentSrc(a)}
                 alt={a.name}
                 title={a.name}
                 className="max-h-40 w-auto rounded-xl border border-neutral-300/70 object-cover dark:border-neutral-700/70"

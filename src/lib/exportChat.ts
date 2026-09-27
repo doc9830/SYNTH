@@ -7,7 +7,7 @@ function toolLine(m: ChatMessage): string {
 }
 
 /** Чат → Markdown (для экспорта и «копировать целиком»). */
-export function conversationToMarkdown(conversation: Conversation): string {
+export function conversationToMarkdown(conversation: Conversation, messages: ChatMessage[]): string {
   const lines: string[] = [
     `# ${conversation.title}`,
     '',
@@ -16,7 +16,7 @@ export function conversationToMarkdown(conversation: Conversation): string {
     '',
   ]
 
-  for (const m of conversation.messages) {
+  for (const m of messages) {
     const who = m.role === 'user' ? '## Пользователь' : '## Ассистент'
     lines.push(who, '')
     if (m.content.trim()) lines.push(m.content.trim(), '')

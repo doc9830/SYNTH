@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { createPortal } from 'react-dom'
 import { pushBackHandler } from '@/lib/backStack'
 import { copyText } from '@/lib/clipboard'
-import { useConversations } from '@/lib/conversations'
+import { useConversations, useConversationMessages } from '@/lib/conversations'
 import { conversationToMarkdown, safeFileName } from '@/lib/exportChat'
 import { saveTextFile } from '@/lib/files'
 import { issuesSignature, useNotices } from '@/lib/notices'
@@ -12,7 +12,7 @@ import { useSettings, type Settings } from '@/lib/settings'
 import { notify } from '@/lib/toast'
 import { useUpdateStore } from '@/lib/updateStore'
 import { cn } from '@/lib/utils'
-import type { Conversation } from '@/types'
+import type { ChatMessage, Conversation } from '@/types'
 import {
   IconAlert,
   IconBrain,
@@ -30,6 +30,9 @@ import {
 } from './icons'
 import { ContextMeter } from './ContextMeter'
 import { ModelSelect } from './ModelSelect'
+
+/** Пустой список сообщений: стабильная ссылка, пока чат не загружен. */
+const NO_MESSAGES: ChatMessage[] = []
 
 interface ChatHeaderProps {
   conversation: Conversation | undefined
@@ -67,7 +70,17 @@ export function ChatHeader({
   /** Шаг подтверждения удаления внутри меню (вместо системного confirm) */
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  /** Пользователь закрыл красную полосу про сбой чтения базы */
+  const [storageErrorHidden, setStorageErrorHidden] = useState(false)
+  /** База не открылась (например, миграция откатилась) — говорим об этом прямо */
+  const loadError = useConversations((s) => s.loadError)
   const update = useSettings((s) => s.update)
+  /**
+   * Сообщения открытого чата: лежат отдельным списком и грузятся лениво
+   * (см. `conversations.ensureMessages`) — для копирования и экспорта их надо
+   * передать явно.
+   */
+  const messages = useConversationMessages(conversation?.id) ?? NO_MESSAGES
   const updateInfo = useUpdateStore((s) => s.info)
   const openUpdateDialog = useUpdateStore((s) => s.openDialog)
   const checkUpdates = useUpdateStore((s) => s.check)
@@ -153,7 +166,7 @@ export function ChatHeader({
           </h2>
           <div className="flex items-center gap-1.5 text-[11px] text-neutral-500 dark:text-neutral-400">
             <ModelSelect kind="chat" variant="chip" value={settings.model} onChange={(model) => update({ model })} />
-            <ContextMeter messages={conversation?.messages ?? []} />
+            <ContextMeter messages={messages} />
           </div>
         </div>
 
@@ -251,11 +264,11 @@ export function ChatHeader({
               <MenuItem
                 icon={<IconCopy size={15} />}
                 label="Скопировать чат"
-                disabled={!conversation?.messages.length}
+                disabled={!messages.length}
                 onClick={async () => {
                   setMenuOpen(false)
                   if (!conversation) return
-                  const ok = await copyText(conversationToMarkdown(conversation))
+                  const ok = await copyText(conversationToMarkdown(conversation, messages))
                   notify(
                     ok ? 'Чат скопирован в Markdown' : 'Не удалось скопировать',
                     ok ? 'success' : 'error',
@@ -265,13 +278,13 @@ export function ChatHeader({
               <MenuItem
                 icon={<IconDownload size={15} />}
                 label="Экспорт в .md"
-                disabled={!conversation?.messages.length}
+                disabled={!messages.length}
                 onClick={async () => {
                   setMenuOpen(false)
                   if (!conversation) return
                   const result = await saveTextFile(
                     safeFileName(conversation.title),
-                    conversationToMarkdown(conversation),
+                    conversationToMarkdown(conversation, messages),
                   )
                   notify(result.message, result.ok ? 'success' : 'error')
                 }}
@@ -279,11 +292,11 @@ export function ChatHeader({
               <MenuItem
                 icon={<IconShare size={15} />}
                 label="Поделиться чатом (.md)"
-                disabled={!conversation?.messages.length}
+                disabled={!messages.length}
                 onClick={async () => {
                   setMenuOpen(false)
                   if (!conversation) return
-                  const result = await exportMarkdown([conversationShareFile(conversation)])
+                  const result = await exportMarkdown([conversationShareFile(conversation, messages)])
                   if (result.method === 'cancelled') return
                   notify(result.message, result.ok ? 'success' : 'error')
                 }}
@@ -341,6 +354,29 @@ export function ChatHeader({
           </>,
           document.body,
         )}
+
+      {loadError && !storageErrorHidden && (
+        <div className="flex items-start gap-2 border-t border-red-200 bg-red-50 px-3 py-2 text-[11px] leading-relaxed text-red-800 sm:px-4 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200">
+          <IconAlert size={13} className="mt-0.5 shrink-0" />
+          <span className="min-w-0 flex-1">{loadError}</span>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="shrink-0 underline underline-offset-2"
+          >
+            Перезапустить
+          </button>
+          <button
+            type="button"
+            onClick={() => setStorageErrorHidden(true)}
+            className="-mt-0.5 -mr-1 shrink-0 rounded-lg p-1.5 text-red-500 transition hover:bg-red-100 dark:hover:bg-red-900/40"
+            aria-label="Скрыть уведомление"
+            title="Скрыть уведомление"
+          >
+            <IconX size={13} />
+          </button>
+        </div>
+      )}
 
       {warnings.length > 0 && !errors.length && !warningsHidden && (
         <div className="flex items-start gap-2 border-t border-neutral-200 bg-neutral-50 px-3 py-2 text-[11px] leading-relaxed text-neutral-600 sm:px-4 dark:border-neutral-800 dark:bg-neutral-900/60 dark:text-neutral-300">

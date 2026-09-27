@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { APP_NAME, APP_VERSION } from '@/lib/appInfo'
 import { useConversations } from '@/lib/conversations'
+import { scanMessages } from '@/lib/db'
 import { providerLabel } from '@/lib/providerPresets'
 import { useSettings } from '@/lib/settings'
 import { notify } from '@/lib/toast'
@@ -19,6 +20,11 @@ import {
   IconX,
 } from './icons'
 import { BrandMark } from './BrandMark'
+
+/** Пауза перед поиском в базе: не сканировать историю на каждую букву */
+const SEARCH_DEBOUNCE_MS = 250
+/** Предохранитель: столько совпадений хватит, чтобы показать найденные чаты */
+const SEARCH_HITS_LIMIT = 200
 
 interface SidebarProps {
   open: boolean
@@ -49,15 +55,51 @@ export function Sidebar({
   const [query, setQuery] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
+  /**
+   * Чаты, в тексте сообщений которых нашёлся запрос.
+   * Сообщений в памяти больше нет (они грузятся лениво, по открытому чату),
+   * поэтому поиск идёт в базе и асинхронно — результат приходит отдельным
+   * состоянием и подмешивается к совпадениям по заголовку.
+   */
+  const [textHits, setTextHits] = useState<ReadonlySet<string>>(() => new Set())
+  const [searching, setSearching] = useState(false)
+
+  useEffect(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) {
+      setTextHits(new Set())
+      setSearching(false)
+      return undefined
+    }
+    setSearching(true)
+    let cancelled = false
+    // печатает пользователь быстро: даём паузу, чтобы не сканировать базу на каждую букву
+    const timer = window.setTimeout(() => {
+      void scanMessages((record) => record.content.toLowerCase().includes(q), SEARCH_HITS_LIMIT)
+        .then((hits) => {
+          if (cancelled) return
+          setTextHits(new Set(hits.map((record) => record.conversationId)))
+          setSearching(false)
+        })
+        .catch(() => {
+          if (cancelled) return
+          setTextHits(new Set())
+          setSearching(false)
+        })
+    }, SEARCH_DEBOUNCE_MS)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [query])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) return conversations
-    return conversations.filter((c) => {
-      if (c.title.toLowerCase().includes(q)) return true
-      return c.messages.some((m) => m.content.toLowerCase().includes(q))
-    })
-  }, [conversations, query])
+    return conversations.filter(
+      (c) => c.title.toLowerCase().includes(q) || textHits.has(c.id),
+    )
+  }, [conversations, query, textHits])
 
   const startRename = (id: string, title: string) => {
     setEditingId(id)
@@ -149,14 +191,13 @@ export function Sidebar({
         <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
           {!filtered.length && (
             <p className="px-3 py-6 text-center text-xs text-neutral-500 dark:text-neutral-400">
-              {query ? 'Ничего не найдено.' : 'Пока нет чатов — начните новый.'}
+              {query ? (searching ? 'Ищу по сообщениям…' : 'Ничего не найдено.') : 'Пока нет чатов — начните новый.'}
             </p>
           )}
 
           <ul className="flex flex-col gap-0.5">
             {filtered.map((conv) => {
               const active = conv.id === activeId
-              const last = conv.messages[conv.messages.length - 1]
               return (
                 <li key={conv.id}>
                   {editingId === conv.id ? (
@@ -214,10 +255,8 @@ export function Sidebar({
                         </span>
                         <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-neutral-500 dark:text-neutral-400">
                           <span>{formatDay(conv.updatedAt)}</span>
-                          {last && (
-                            <span className="truncate opacity-70">
-                              · {last.content.replace(/\s+/g, ' ').slice(0, 40)}
-                            </span>
+                          {conv.preview && (
+                            <span className="truncate opacity-70">· {conv.preview}</span>
                           )}
                         </span>
                       </button>

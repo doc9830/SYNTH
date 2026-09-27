@@ -111,6 +111,7 @@ check('в склеенном файле все 12 блоков', (joinedTwelve.c
 
 
 // 8. Экспорт чата: front-matter, роли, tool-раунды, вложения
+/** Обёртка чата: сообщения живут отдельным списком (схема 3). */
 const conversation: Conversation = {
   id: 'conv-1',
   title: 'ТЗ: генератор промтов',
@@ -118,7 +119,11 @@ const conversation: Conversation = {
   updatedAt: 0,
   pinned: false,
   model: 'deepseek-v4.1-flash',
-  messages: [
+  preview: 'Сделай ТЗ',
+  messageCount: 2,
+}
+
+const chatMessages: ChatMessage[] = [
     {
       id: 'm1',
       role: 'user',
@@ -145,9 +150,8 @@ const conversation: Conversation = {
         },
       ],
     } satisfies ChatMessage,
-  ],
-}
-const chat = conversationToShareMarkdown(conversation, fixedNow)
+]
+const chat = conversationToShareMarkdown(conversation, chatMessages, fixedNow)
 check('front-matter: заголовок', chat.includes('title: "ТЗ: генератор промтов"'))
 check('front-matter: дата ISO', chat.includes(`exported: ${fixedNow.toISOString()}`))
 check('front-matter: модель', chat.includes('model: "deepseek-v4.1-flash"'))
@@ -169,16 +173,14 @@ const secret = redactSecrets('api_key: "sk-abcdefgh12345678"\nAuthorization: Bea
 check('sk-ключи вырезаются', !secret.includes('sk-abcdefgh12345678') && !secret.includes('sk-live-1234567890'))
 check('Bearer-токены вырезаются', !secret.includes('Bearer abcdefgh123456'))
 const secretChat = conversationToShareMarkdown(
-  {
-    ...conversation,
-    messages: [{ id: 'm', role: 'user', createdAt: 0, status: 'complete', content: 'sk-abcdefgh12345678' }],
-  },
+  conversation,
+  [{ id: 'm', role: 'user', createdAt: 0, status: 'complete', content: 'sk-abcdefgh12345678' }],
   fixedNow,
 )
 check('секреты не попадают в экспорт чата', !secretChat.includes('sk-abcdefgh12345678'))
 
 // 10. Имя файла для кнопки «Поделиться чатом»
-const chatFile = conversationShareFile(conversation, fixedNow)
+const chatFile = conversationShareFile(conversation, chatMessages, fixedNow)
 check('имя файла чата: слаг-дата.md', chatFile.name === 'ТЗ-генератор-промтов-2026-01-02-0304.md')
 check('содержимое файла чата — тот же markdown', chatFile.content === chat)
 check('в имени файла чата нет слэшей', !chatFile.name.includes('/'))

@@ -97,8 +97,15 @@ export interface ImageAttachment {
   id: string
   name: string
   mime: string
-  /** data URL: data:image/png;base64,... */
-  dataUrl: string
+  /**
+   * Байты картинки. В IndexedDB вложение лежит именно так: Blob хранится
+   * структурным клонированием, без base64-накладных +33 % и без раздувания
+   * JS-кучи строками. Для показа берём object URL, data URL собирается
+   * только в момент отправки запроса провайдеру.
+   */
+  blob?: Blob
+  /** data URL: старые записи (до схемы 3) и вложения, пришедшие строкой */
+  dataUrl?: string
   width?: number
   height?: number
 }
@@ -131,6 +138,14 @@ export interface ChatMessage {
   usage?: TokenUsage
 }
 
+/**
+ * Чат без сообщений — то, что лежит в сторе `conversations` (IndexedDB).
+ *
+ * Сами сообщения живут отдельно (стор `messages`, ключ — id сообщения).
+ * Иначе каждая запись переписывала бы всю переписку вместе с картинками
+ * в base64: при 15–20 изображениях это десятки мегабайт на запись.
+ * Список чатов и шапка читают только эту обёртку.
+ */
 export interface Conversation {
   id: string
   title: string
@@ -139,7 +154,24 @@ export interface Conversation {
   pinned: boolean
   /** Последняя использованная модель */
   model: string
-  messages: ChatMessage[]
+  /** Короткая подпись последнего сообщения для списка чатов */
+  preview: string
+  /** Сколько сообщений в чате — не загружая сами сообщения */
+  messageCount: number
+}
+
+/**
+ * Сообщение в сторе `messages`: `ChatMessage` плюс владелец.
+ * Индекс `byConversationId` даёт все сообщения чата в порядке записи,
+ * а запись отдельного сообщения не трогает остальные.
+ */
+export interface MessageRecord extends ChatMessage {
+  conversationId: string
+  /**
+   * Позиция в диалоге. В индексе IndexedDB записи лежат по ключу (id), а не по
+   * времени создания, поэтому порядок восстанавливаем по этому полю.
+   */
+  order: number
 }
 
 /** Возможности модели — определяем эвристикой по ID. */

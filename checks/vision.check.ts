@@ -76,13 +76,15 @@ function settingsWith(model: string, visionInput: Settings['visionInput']): Sett
   return next
 }
 
-function lastUser(settings: Settings): WireContentPart[] | string | null {
-  const wire = buildWireMessages(oneMessage, settings)
+async function lastUser(settings: Settings): Promise<WireContentPart[] | string | null> {
+  // сборка запроса асинхронная: картинки хранятся байтами и в data URL
+  // превращаются только на отправке
+  const wire = await buildWireMessages(oneMessage, settings)
   const last = wire[wire.length - 1]
   return Array.isArray(last.content) ? last.content : last.content
 }
 
-const withImage = lastUser(settingsWith('deepseek-v4.1-flash', 'auto'))
+const withImage = await lastUser(settingsWith('deepseek-v4.1-flash', 'auto'))
 check(
   'deepseek-v4.1-flash получает картинку в запросе',
   Array.isArray(withImage) &&
@@ -93,19 +95,19 @@ check(
   Array.isArray(withImage) && withImage[0].type === 'text' && withImage[0].text === 'что на фото?',
 )
 
-const textOnly = lastUser(settingsWith('deepseek-chat', 'auto'))
+const textOnly = await lastUser(settingsWith('deepseek-chat', 'auto'))
 check(
   'текстовая модель получает пояснение вместо картинки',
   typeof textOnly === 'string' && textOnly.includes('не принимает изображения на вход'),
 )
 
-const forced = lastUser(settingsWith('deepseek-chat', 'on'))
+const forced = await lastUser(settingsWith('deepseek-chat', 'on'))
 check(
   'переопределение «да» отправляет картинку текстовой модели',
   Array.isArray(forced) && forced.some((p) => p.type === 'image_url'),
 )
 
-const forbidden = lastUser(settingsWith('claude-sonnet-4-5', 'off'))
+const forbidden = await lastUser(settingsWith('claude-sonnet-4-5', 'off'))
 check(
   'переопределение «нет» не отправляет картинку',
   typeof forbidden === 'string' && forbidden.includes('не принимает изображения на вход'),
@@ -114,7 +116,7 @@ check(
 const noAttachment: ChatMessage[] = [
   { id: 'm2', role: 'user', createdAt: Date.now(), content: 'привет', status: 'complete' },
 ]
-const plain = buildWireMessages(noAttachment, settingsWith('deepseek-chat', 'auto'))
+const plain = await buildWireMessages(noAttachment, settingsWith('deepseek-chat', 'auto'))
 check('сообщение без вложений остаётся строкой', plain[plain.length - 1].content === 'привет')
 
 // 5. Ошибка провайдера про картинку → понятная подсказка

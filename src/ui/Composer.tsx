@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { fileToAttachment, isImageFile } from '@/lib/attachments'
+import { attachmentSrc, fileToAttachment, isImageFile } from '@/lib/attachments'
 import { PRIMARY_FEATURES, isFeatureOn, setFeature, type Feature } from '@/lib/features'
 import { isAndroidDevice } from '@/lib/nativeShell'
 import { useSettings } from '@/lib/settings'
@@ -173,7 +173,7 @@ export function Composer({
             {attachments.map((a) => (
               <div key={a.id} className="relative">
                 <img
-                  src={a.dataUrl}
+                  src={attachmentSrc(a)}
                   alt={a.name}
                   className="h-16 w-16 rounded-xl border border-neutral-300 object-cover dark:border-neutral-700"
                 />

@@ -97,12 +97,10 @@ export function useChat() {
   const commitTurn = useCallback(
     (conversationId: string, assistantId: string, draft: AssistantDraft) => {
       const store = useConversations.getState()
-      const conv = store.conversations.find((c) => c.id === conversationId)
-      if (!conv) return
+      if (!store.conversations.some((c) => c.id === conversationId)) return
+      const current = store.messages[conversationId] ?? []
       const fields = draftFields(draft)
-      const messages = conv.messages.map((m) =>
-        m.id === assistantId ? { ...m, ...fields } : m,
-      )
+      const messages = current.map((m) => (m.id === assistantId ? { ...m, ...fields } : m))
       // immediate: финал сразу в IndexedDB, без дебаунса
       store.setMessages(conversationId, messages, true)
       clearStreamDraft(assistantId)
@@ -285,6 +283,8 @@ export function useChat() {
       const conv = useConversations.getState().conversations.find((c) => c.id === conversationId)
       if (!conv) return
 
+      // сообщения чата могли ещё не загрузиться (леневая загрузка из IndexedDB)
+      const loaded = await useConversations.getState().ensureMessages(conversationId)
       // Команда «запомни, что …» — пишем в память детерминированно, без модели.
       // Сообщение всё равно уходит в чат: склейка похожих записей не даст дубля.
       if (settings.memory.enabled) {
@@ -308,7 +308,7 @@ export function useChat() {
         status: 'complete',
       }
       const assistantMessage = emptyAssistant(uid('msg'))
-      const history = [...conv.messages, userMessage]
+      const history = [...loaded, userMessage]
 
       useConversations.getState().setMessages(conversationId, [...history, assistantMessage], true)
       await runTurn(conversationId, history, assistantMessage.id)
@@ -325,16 +325,16 @@ export function useChat() {
   const regenerate = useCallback(async () => {
     if (isStreaming) return
     const store = useConversations.getState()
-    const conv = store.conversations.find((c) => c.id === store.activeId)
-    if (!conv) return
+    if (!store.activeId) return
+    const messages = await store.ensureMessages(store.activeId)
 
-    const lastUserIndex = conv.messages.map((m) => m.role).lastIndexOf('user')
+    const lastUserIndex = messages.map((m) => m.role).lastIndexOf('user')
     if (lastUserIndex === -1) return
 
-    const history = conv.messages.slice(0, lastUserIndex + 1)
+    const history = messages.slice(0, lastUserIndex + 1)
     const assistantMessage = emptyAssistant(uid('msg'))
-    store.setMessages(conv.id, [...history, assistantMessage], true)
-    await runTurn(conv.id, history, assistantMessage.id)
+    store.setMessages(store.activeId, [...history, assistantMessage], true)
+    await runTurn(store.activeId, history, assistantMessage.id)
   }, [isStreaming, runTurn])
 
   /** Изменить текст сообщения пользователя и перезапустить ответ. */
@@ -342,17 +342,18 @@ export function useChat() {
     async (messageId: string, newText: string) => {
       if (isStreaming) return
       const store = useConversations.getState()
-      const conv = store.conversations.find((c) => c.id === store.activeId)
-      if (!conv) return
+      const conversationId = store.activeId
+      if (!conversationId || !newText.trim()) return
+      const messages = await store.ensureMessages(conversationId)
 
-      const index = conv.messages.findIndex((m) => m.id === messageId)
-      if (index === -1 || !newText.trim()) return
+      const index = messages.findIndex((m) => m.id === messageId)
+      if (index === -1) return
 
-      const updated: ChatMessage = { ...conv.messages[index], content: newText.trim() }
-      const history = [...conv.messages.slice(0, index), updated]
+      const updated: ChatMessage = { ...messages[index], content: newText.trim() }
+      const history = [...messages.slice(0, index), updated]
       const assistantMessage = emptyAssistant(uid('msg'))
-      store.setMessages(conv.id, [...history, assistantMessage], true)
-      await runTurn(conv.id, history, assistantMessage.id)
+      store.setMessages(conversationId, [...history, assistantMessage], true)
+      await runTurn(conversationId, history, assistantMessage.id)
     },
     [isStreaming, runTurn],
   )

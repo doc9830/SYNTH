@@ -3,6 +3,7 @@ import { ApiError } from '@/providers/openai'
 import type { WireMessage, WireToolCall } from '@/providers/openai/types'
 import { buildTools, toolMap, toWireTools, type Tool } from '@/tools/registry'
 import type { ChatMessage, TokenUsage, ToolCallRecord } from '@/types'
+import { attachmentDataUrl } from './attachments'
 import type { Settings } from './settings'
 import { debugLog } from './debug'
 import { historyBudgetFor, trimHistory } from './context'
@@ -48,8 +49,14 @@ function toTokenUsage(usage?: {
  * История приложения → сообщения OpenAI-совместимого протокола.
  * Инструментальные раунды прошлых ходов разворачивать не нужно:
  * для контекста достаточно финальных текстов, а инструмент модель вызовет снова.
+ *
+ * Асинхронная из-за картинок: в истории они лежат байтами (Blob), а в запрос
+ * уходят data URL — собираем их только здесь, в момент отправки.
  */
-export function buildWireMessages(history: ChatMessage[], settings: Settings): WireMessage[] {
+export async function buildWireMessages(
+  history: ChatMessage[],
+  settings: Settings,
+): Promise<WireMessage[]> {
   // Возможности модели: эвристика по id + ручное переопределение из настроек
   // («Изображения на вход»), чтобы картинки не пропадали у нестандартных имён.
   const caps = getModelCapabilities(settings.model, settings.visionInput)
@@ -103,7 +110,8 @@ export function buildWireMessages(history: ChatMessage[], settings: Settings): W
     const parts: NonNullable<WireMessage['content']> = []
     if (m.content.trim()) parts.push({ type: 'text', text: m.content })
     for (const a of attachments) {
-      parts.push({ type: 'image_url', image_url: { url: a.dataUrl } })
+      // картинка в истории лежит байтами: data URL собираем здесь, на отправке
+      parts.push({ type: 'image_url', image_url: { url: await attachmentDataUrl(a) } })
     }
     out.push({ role: 'user', content: parts })
   }
@@ -199,7 +207,7 @@ export async function runAgent(input: AgentInput): Promise<AgentRunResult> {
   const tools: Tool[] = buildTools(settings)
   const byName = toolMap(tools)
   const wireTools = toWireTools(tools)
-  const wire: WireMessage[] = buildWireMessages(history, settings)
+  const wire: WireMessage[] = await buildWireMessages(history, settings)
 
   let content = ''
   let reasoning = ''

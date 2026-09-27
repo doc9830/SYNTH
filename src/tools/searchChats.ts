@@ -1,4 +1,5 @@
 import { useConversations } from '@/lib/conversations'
+import { scanMessages } from '@/lib/db'
 import type { ChatMessage } from '@/types'
 import type { Tool, ToolResult } from './types'
 
@@ -6,12 +7,16 @@ import type { Tool, ToolResult } from './types'
  * Поиск по прошлым чатам этого приложения.
  * Память хранит факты, а этот инструмент даёт доступ к сырой истории:
  * «мы обсуждали это раньше», «что я говорил про бюджет проекта».
- * Работает полностью локально (IndexedDB → стор разговоров), ничего не отправляет.
+ *
+ * Сообщения чатов в памяти не держатся (грузятся лениво, по открытому чату),
+ * поэтому поиск идёт курсором по базе. Работает полностью локально.
  */
 
 const MAX_CHATS = 5
 const MAX_SNIPPETS_PER_CHAT = 2
 const SNIPPET_LENGTH = 280
+/** Предохранитель на проход по базе: столько совпадений достаточно для ответа */
+const MAX_HITS = 500
 const STOP = new Set(['что', 'как', 'где', 'когда', 'это', 'мне', 'the', 'and', 'for', 'про', 'или'])
 
 /** Токены запроса: слова от 3 символов; пусто → берём запрос целиком. */
@@ -60,17 +65,33 @@ export const searchChatsTool: Tool = {
     }
 
     const tokens = queryTokens(query)
+    const hits = await scanMessages(
+      (record) => tokens.some((token) => record.content.toLowerCase().includes(token)),
+      MAX_HITS,
+    )
+    if (!hits.length) {
+      return {
+        content: `По запросу «${query}» в истории чатов ничего не найдено. Всего чатов: ${conversations.length}.`,
+        summary: 'Ничего не найдено',
+      }
+    }
+
+    // собираем совпадения обратно по чатам: обёртки чатов у нас уже есть
+    const byConversation = new Map<string, Array<{ message: ChatMessage; score: number }>>()
+    for (const record of hits) {
+      const text = record.content.toLowerCase()
+      let score = 0
+      for (const token of tokens) if (text.includes(token)) score += 1
+      if (score <= 0) continue
+      const list = byConversation.get(record.conversationId) ?? []
+      list.push({ message: record, score: score + (record.role === 'user' ? 0.5 : 0) })
+      byConversation.set(record.conversationId, list)
+    }
+
     const scored = conversations
       .map((conversation) => {
         const titleHit = tokens.some((t) => conversation.title.toLowerCase().includes(t))
-        const matches: Array<{ message: ChatMessage; score: number }> = []
-        for (const message of conversation.messages) {
-          const text = message.content.toLowerCase()
-          let score = 0
-          for (const token of tokens) if (text.includes(token)) score += 1
-          if (score > 0) matches.push({ message, score: score + (message.role === 'user' ? 0.5 : 0) })
-        }
-        matches.sort((a, b) => b.score - a.score)
+        const matches = (byConversation.get(conversation.id) ?? []).sort((a, b) => b.score - a.score)
         const score = (titleHit ? 3 : 0) + matches.reduce((sum, m) => sum + m.score, 0)
         return { conversation, score, matches }
       })
@@ -88,7 +109,7 @@ export const searchChatsTool: Tool = {
     const blocks: string[] = []
     for (const item of scored) {
       const date = new Date(item.conversation.updatedAt).toLocaleDateString('ru-RU')
-      const head = `Чат «${item.conversation.title}» (обновлён ${date}, сообщений: ${item.conversation.messages.length})`
+      const head = `Чат «${item.conversation.title}» (обновлён ${date}, сообщений: ${item.conversation.messageCount})`
       const lines = item.matches.slice(0, MAX_SNIPPETS_PER_CHAT).map(({ message }) => {
         const who = message.role === 'user' ? 'пользователь' : 'ассистент'
         return `  · ${who}: ${snippet(message.content, tokens)}`

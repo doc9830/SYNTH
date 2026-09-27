@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ImageAttachment } from '@/types'
 import { pushBackHandler, handleBackPress } from '@/lib/backStack'
-import { useActiveConversation, useConversations } from '@/lib/conversations'
+import { useActiveConversation, useConversations, useConversationMessages, useMessagesLoading } from '@/lib/conversations'
 import { useMemory } from '@/lib/memory'
 import { minimizeApp, onAndroidBack, onAppResume } from '@/lib/nativeShell'
 import { getReadiness } from '@/lib/readiness'
@@ -36,6 +36,9 @@ export default function App() {
   const load = useConversations((s) => s.load)
   const loadMemory = useMemory((s) => s.load)
   const conversation = useActiveConversation()
+  /** Сообщения открытого чата читаются лениво: до загрузки их просто нет */
+  const messages = useConversationMessages(conversation?.id)
+  const messagesLoading = useMessagesLoading(conversation?.id)
   const { send, stop, regenerate, editAndResend, removeMessage, isStreaming } = useChat()
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -177,6 +180,8 @@ export default function App() {
         {configured ? (
           <MessageList
             conversation={conversation}
+            messages={messages ?? []}
+            loading={messagesLoading}
             busy={isStreaming}
             onRegenerate={() => void regenerate()}
             onEdit={(messageId, text) => void editAndResend(messageId, text)}

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { Conversation } from '@/types'
+import type { ChatMessage, Conversation } from '@/types'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/lib/settings'
 import { useStreamDraft } from '@/lib/streamDraft'
@@ -38,6 +38,10 @@ const SUGGESTION_ICONS = {
 
 interface MessageListProps {
   conversation: Conversation | undefined
+  /** Сообщения открытого чата (грузятся лениво, отдельно от обёртки чата) */
+  messages: ChatMessage[]
+  /** Сообщения ещё читаются из IndexedDB */
+  loading: boolean
   busy: boolean
   onRegenerate: () => void
   onEdit: (messageId: string, text: string) => void
@@ -48,6 +52,8 @@ interface MessageListProps {
 
 export function MessageList({
   conversation,
+  messages,
+  loading,
   busy,
   onRegenerate,
   onEdit,
@@ -61,7 +67,6 @@ export function MessageList({
   const atBottomRef = useRef(true)
   const showReasoning = useSettings((s) => s.settings.ui.showReasoning)
   const showToolActivity = useSettings((s) => s.settings.ui.showToolActivity)
-  const messages = conversation?.messages ?? []
   const conversationId = conversation?.id
 
   const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
@@ -102,6 +107,15 @@ export function MessageList({
       if (atBottomRef.current) scrollToBottom('auto')
     })
   }, [conversationId])
+
+  // сообщения ещё едут из базы — «чем помочь?» показывать рано, иначе экран мигнёт
+  if (loading && !messages.length) {
+    return (
+      <div className="flex flex-1 items-center justify-center px-4 py-10">
+        <span className="text-sm text-neutral-500 dark:text-neutral-400">Загружаю историю…</span>
+      </div>
+    )
+  }
 
   if (!conversation || messages.length === 0) {
     return (

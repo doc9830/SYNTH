@@ -334,21 +334,27 @@ function messageSection(message: ChatMessage, counter: { n: number }): string[] 
 
 /**
  * Чат → Markdown для отправки файлом: front-matter + роли + tool-раунды.
- * `now` вынесен параметром, чтобы проверки были детерминированными.
+ * Сообщения передаём отдельно: они живут в своей записи IndexedDB и грузятся
+ * лениво, у обёртки чата их нет. `now` вынесен параметром, чтобы проверки
+ * были детерминированными.
  */
-export function conversationToShareMarkdown(conversation: Conversation, now = new Date()): string {
+export function conversationToShareMarkdown(
+  conversation: Conversation,
+  messages: ChatMessage[],
+  now = new Date(),
+): string {
   const counter = { n: 0 }
   const lines: string[] = [
     '---',
     `title: ${yamlValue(conversation.title)}`,
     `exported: ${now.toISOString()}`,
     `model: ${yamlValue(conversation.model || '—')}`,
-    `messages: ${conversation.messages.length}`,
+    `messages: ${messages.length}`,
     '---',
     '',
   ]
 
-  for (const message of conversation.messages) {
+  for (const message of messages) {
     lines.push(...messageSection(message, counter), '')
   }
 
@@ -356,11 +362,15 @@ export function conversationToShareMarkdown(conversation: Conversation, now = ne
 }
 
 /** Файл для кнопки «Поделиться чатом»: `<слаг-заголовка>-<ГГГГ-ММ-ДД-ЧЧмм>.md`. */
-export function conversationShareFile(conversation: Conversation, now = new Date()): ShareFile {
+export function conversationShareFile(
+  conversation: Conversation,
+  messages: ChatMessage[],
+  now = new Date(),
+): ShareFile {
   const slug = slugify(conversation.title) || 'чат'
   return {
     name: `${slug}-${stampFileName(now)}.md`,
-    content: conversationToShareMarkdown(conversation, now),
+    content: conversationToShareMarkdown(conversation, messages, now),
   }
 }
 

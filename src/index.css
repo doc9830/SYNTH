@@ -336,6 +336,23 @@ body {
   animation: synth-sweep 1.6s ease-in-out infinite;
 }
 
+/* Пульсация кнопки записи: видно, что микрофон слушает прямо сейчас */
+@keyframes synth-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgb(220 38 38 / 0.55);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgb(220 38 38 / 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgb(220 38 38 / 0);
+  }
+}
+.mic-live {
+  animation: synth-pulse 1.4s ease-out infinite;
+}
+
+
 /* Курсор в конце печатающегося ответа */
 @keyframes synth-caret {
   0%,

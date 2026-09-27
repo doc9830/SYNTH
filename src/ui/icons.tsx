@@ -51,6 +51,26 @@ export const IconStop = (p: IconProps) => (
   </Icon>
 )
 
+/** Микрофон — «голосовой ввод»: капсула, дужка и стойка. */
+export const IconMic = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="9" y="3" width="6" height="11" rx="3" />
+    <path d="M5 11a7 7 0 0 0 14 0" />
+    <path d="M12 18v3" />
+  </Icon>
+)
+
+/** Микрофон с крестиком — «отменить запись». */
+export const IconMicOff = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M9 5a3 3 0 0 1 6 0v4" />
+    <path d="M15 12.5V14a3 3 0 0 1-4.6 2.5" />
+    <path d="M5 11a7 7 0 0 0 10.4 6.1" />
+    <path d="M12 18v3" />
+    <path d="M4 4l16 16" />
+  </Icon>
+)
+
 /** Динамик с волнами — «озвучить ответ». */
 export const IconVolume = (p: IconProps) => (
   <Icon {...p}>

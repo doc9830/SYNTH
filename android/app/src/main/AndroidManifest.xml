@@ -40,6 +40,10 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Установка APK-обновлений из самого приложения (SYNTH Updater) -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Голосовой ввод (SynthSpeech): запись с микрофона. Разрешение запрашивается
+         при первом нажатии на кнопку записи; при отказе текстовый ввод работает
+         как раньше. Аудио нигде не сохраняется и никуда не отправляется. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <!-- Android 11+ (API 30): без этих записей resolveActivity() для камеры
          возвращает null и «Прикрепить → Камера» молча открывает файловый
@@ -55,6 +59,12 @@
              движки синтеза речи, и озвучка «не находит голос» на ровном месте. -->
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+        <!-- И для распознавания речи: без этой записи на Android 11+
+             SpeechRecognizer.isRecognitionAvailable() отвечает false, хотя сервис
+             на устройстве есть, и голосовой ввод молча считается недоступным. -->
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
         </intent>
     </queries>
 </manifest>

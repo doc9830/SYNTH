@@ -1,13 +1,25 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { asrSupported, describeDictationButton } from '@/lib/asr'
 import { attachmentSrc, fileToAttachment, isImageFile } from '@/lib/attachments'
 import { PRIMARY_FEATURES, isFeatureOn, setFeature, type Feature } from '@/lib/features'
 import { isAndroidDevice } from '@/lib/nativeShell'
 import { useSettings } from '@/lib/settings'
 import { getModelCapabilities } from '@/lib/utils'
 import { notify } from '@/lib/toast'
+import { canDictate, composeDictation, dictationValue, useDictation } from '@/lib/useDictation'
 import type { ImageAttachment } from '@/types'
 import { cn } from '@/lib/utils'
-import { IconImage, IconPaperclip, IconSend, IconSettings, IconStop, IconUpload, IconX } from './icons'
+import {
+  IconImage,
+  IconMic,
+  IconMicOff,
+  IconPaperclip,
+  IconSend,
+  IconSettings,
+  IconStop,
+  IconUpload,
+  IconX,
+} from './icons'
 import { Sheet } from './Sheet'
 
 /** Черновики по чатам: переключение чата не должно терять набранный текст. */
@@ -59,23 +71,54 @@ export function Composer({
   const galleryRef = useRef<HTMLInputElement>(null)
   const caps = getModelCapabilities(model, settings.visionInput)
 
+  // ── Голосовой ввод (задача 07) ───────────────────────────────────────
+  // Распознанный текст только вставляется в поле ввода: автоотправки нет.
+  const dictationSupported = asrSupported()
+  const dictationStatus = useDictation((s) => s.status)
+  const dictationText = useDictation(dictationValue)
+  const dictationResult = useDictation((s) => s.result)
+  const asrInfo = useDictation((s) => s.info)
+  const ensureAsr = useDictation((s) => s.ensureProbe)
+  const startVoice = useDictation((s) => s.start)
+  const stopVoice = useDictation((s) => s.stop)
+  const cancelVoice = useDictation((s) => s.cancel)
+  const acknowledgeVoice = useDictation((s) => s.acknowledge)
+  const listening = dictationStatus !== 'idle'
+  const asrReady = canDictate(asrInfo)
+  /** Что показывать в поле: во время записи — текст вместе с распознанным. */
+  const value = dictationText ?? text
+
+  // проверяем систему распознавания один раз при открытии поля ввода
+  useEffect(() => {
+    if (dictationSupported) void ensureAsr()
+  }, [dictationSupported, ensureAsr])
+
+  // запись закончилась — забираем распознанный текст в поле и чистим сессию
+  useEffect(() => {
+    if (!dictationResult) return
+    setText(composeDictation(dictationResult.base, dictationResult.text))
+    acknowledgeVoice()
+  }, [dictationResult, acknowledgeVoice])
+
   // подгрузка/сохранение черновика при переключении чата
   useEffect(() => {
     setText(conversationId ? (drafts.get(conversationId) ?? '') : '')
     setAttachments([])
-  }, [conversationId])
+    // Запись относилась к прежнему чату: распознанный текст в новый не несём.
+    if (useDictation.getState().status !== 'idle') void cancelVoice()
+  }, [conversationId, cancelVoice])
 
   useEffect(() => {
     if (conversationId) drafts.set(conversationId, text)
   }, [conversationId, text])
 
-  // автовысота textarea
+  // автовысота textarea: растёт и от речи, которую распознаём прямо сейчас
   useEffect(() => {
     const el = areaRef.current
     if (!el) return
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight, 260)}px`
-  }, [text])
+  }, [value])
 
   const addFiles = async (files: FileList | File[]) => {
     const list = Array.from(files)
@@ -109,6 +152,8 @@ export function Composer({
   }
 
   const submit = () => {
+    // Во время записи поле только пополняется — отправка отдельным действием.
+    if (listening) return
     const value = text.trim()
     if (!value || busy || !canSend) return
     onSend(value, attachments)
@@ -116,6 +161,15 @@ export function Composer({
     setAttachments([])
     if (conversationId) drafts.set(conversationId, '')
     requestAnimationFrame(() => areaRef.current?.focus())
+  }
+
+  /**
+   * Тап по микрофону: первый — начать запись, второй — закончить её. Ничего
+   * держать пальцем не нужно, а запись сама обрывается по тишине (см. asr.ts).
+   */
+  const toggleDictation = () => {
+    if (listening) void stopVoice()
+    else void startVoice(value.trim() ? value : '')
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -217,10 +271,17 @@ export function Composer({
 
           <textarea
             ref={areaRef}
-            value={text}
+            value={value}
             rows={1}
-            placeholder={canSend ? 'Спросите что-нибудь…' : 'Сначала заполните настройки подключения'}
+            placeholder={
+              listening
+                ? 'Говорите — текст появится здесь…'
+                : canSend
+                  ? 'Спросите что-нибудь…'
+                  : 'Сначала заполните настройки подключения'
+            }
             disabled={!canSend}
+            readOnly={listening}
             enterKeyHint="enter"
             title={
               ENTER_INSERTS_NEWLINE
@@ -232,10 +293,54 @@ export function Composer({
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
-            className="max-h-[260px] min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-[15px] leading-relaxed text-neutral-800 outline-none placeholder:text-neutral-400 disabled:cursor-not-allowed dark:text-neutral-100"
+            className={cn(
+              'max-h-[260px] min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-[15px] leading-relaxed text-neutral-800 outline-none placeholder:text-neutral-400 disabled:cursor-not-allowed dark:text-neutral-100',
+              // во время записи поле пополняется само — курсор и клавиатура не нужны
+              listening && 'text-neutral-500 dark:text-neutral-400',
+            )}
           />
 
-          {busy ? (
+          {/* Голосовой ввод: первый тап — начать, второй — закончить. Пока идёт
+              запись, поле заполняется само, а справа — «закончить» и «отменить». */}
+          {listening && (
+            <button
+              type="button"
+              onClick={() => void cancelVoice()}
+              title="Отменить запись и выбросить текст"
+              aria-label="Отменить запись"
+              className="grid h-10 w-10 shrink-0 place-items-center rounded-xl text-neutral-500 transition active:bg-neutral-200/70 dark:text-neutral-400 dark:active:bg-neutral-800"
+            >
+              <IconMicOff size={19} />
+            </button>
+          )}
+
+          {dictationSupported && !listening && (
+            <button
+              type="button"
+              onClick={toggleDictation}
+              disabled={!canSend}
+              title={describeDictationButton(false)}
+              aria-label="Голосовой ввод"
+              className={cn(
+                'grid h-10 w-10 shrink-0 place-items-center rounded-xl text-neutral-500 transition active:bg-neutral-200/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-neutral-400 dark:active:bg-neutral-800',
+                asrInfo && !asrReady && 'opacity-50',
+              )}
+            >
+              <IconMic size={19} />
+            </button>
+          )}
+
+          {listening ? (
+            <button
+              type="button"
+              onClick={() => void stopVoice()}
+              title="Закончить запись"
+              aria-label="Закончить запись"
+              className="mic-live grid h-10 w-10 shrink-0 place-items-center rounded-full bg-red-600 text-white transition active:bg-red-700"
+            >
+              <IconMic size={19} />
+            </button>
+          ) : busy ? (
             <button
               type="button"
               onClick={onStop}

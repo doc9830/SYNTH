@@ -10,10 +10,11 @@ public class MainActivity extends BridgeActivity {
         // Локальные плагины (до super.onCreate):
         //   SynthUpdater — загрузка и установка APK-обновлений;
         //   SynthFiles   — сохранение файлов (экспорт чата, картинки) из WebView;
-        //   SynthTts     — озвучка ответов системным синтезом речи (TextToSpeech).
+        //   SynthSpeech  — озвучка ответов (TextToSpeech) и голосовой ввод
+        //                  (SpeechRecognizer): обе задачи — системные средства.
         registerPlugin(UpdaterPlugin.class);
         registerPlugin(FilesPlugin.class);
-        registerPlugin(TtsPlugin.class);
+        registerPlugin(SpeechPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

@@ -10,6 +10,7 @@ import { notify } from '@/lib/toast'
 import { useUpdateStore } from '@/lib/updateStore'
 import { useAppearance } from '@/lib/useAppearance'
 import { useChat } from '@/lib/useChat'
+import { useDictation } from '@/lib/useDictation'
 import { useSpeech } from '@/lib/useSpeech'
 import { ChatHeader } from '@/ui/ChatHeader'
 import { Composer } from '@/ui/Composer'
@@ -153,6 +154,12 @@ export default function App() {
   // движок: TTS не должен говорить из кармана и держать ресурсы в фоне.
   const releaseSpeech = useSpeech((s) => s.release)
   useEffect(() => onAppPause(() => void releaseSpeech()), [releaseSpeech])
+
+  // То же для голосового ввода (задача 07): уход в фон обрывает запись, иначе
+  // приложение продолжало бы слушать микрофон в кармане. Уже распознанный текст
+  // при этом остаётся в поле ввода.
+  const releaseDictation = useDictation((s) => s.release)
+  useEffect(() => onAppPause(() => void releaseDictation()), [releaseDictation])
 
   const handleSend = (text: string, attachments: ImageAttachment[]) => {
     if (!readiness.canChat) {

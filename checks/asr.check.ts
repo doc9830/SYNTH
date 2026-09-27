@@ -1,0 +1,333 @@
+/**
+ * Проверка голосового ввода системным распознаванием речи (задача 07).
+ *
+ * Запуск: npm run checks
+ *
+ * Системного `SpeechRecognizer` в Node нет, поэтому проверяем то, что от него не
+ * зависит: события плагина и тексты (`src/lib/asr.ts`), чистое состояние сессии
+ * (`src/lib/useDictation.ts`) и — по исходникам — обвязку Android и интерфейс.
+ * Главное, что здесь держится: без плагина, сервиса распознавания или разрешения
+ * приложение остаётся с текстовым вводом и говорит об этом словами.
+ */
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import {
+  ASR_LANGUAGE,
+  ASR_SILENCE_MS,
+  DICTATION_TAP_HINT,
+  asrErrorMessage,
+  asrEventFromNative,
+  asrSupported,
+  cancelDictation,
+  describeAsrUnavailable,
+  describeDictationButton,
+  describeDictationNetwork,
+  describeDictationSource,
+  describeMicDenied,
+  probeAsr,
+  requestMicAccess,
+  stopDictation,
+} from '@/lib/asr'
+import { nativeAsrAvailable, nativeAsrInfo } from '@/lib/nativeAsr'
+import {
+  canDictate,
+  composeDictation,
+  dictationValue,
+  reduceDictation,
+  useDictation,
+  type DictationDraft,
+} from '@/lib/useDictation'
+import { useToasts } from '@/lib/toast'
+import { check, finish } from './harness'
+
+const source = (relative: string) =>
+  readFileSync(fileURLToPath(new URL(`../src/${relative}`, import.meta.url)), 'utf8')
+const androidSource = (relative: string) =>
+  readFileSync(fileURLToPath(new URL(`../android/${relative}`, import.meta.url)), 'utf8')
+
+// ── События нативного распознавания ────────────────────────────────────
+
+check('готовность сервиса доходит до слоя платформы', asrEventFromNative({ state: 'ready' })?.kind === 'ready')
+check(
+  'начало речи и тишина — отдельные состояния',
+  asrEventFromNative({ state: 'speech' })?.kind === 'speech' &&
+    asrEventFromNative({ state: 'silence' })?.kind === 'silence',
+)
+
+const partial = asrEventFromNative({ state: 'partial', text: 'погода на' })
+check('частичный текст виден по мере речи', partial?.kind === 'partial' && partial.text === 'погода на')
+check('пустой частичный текст отбрасывается', asrEventFromNative({ state: 'partial', text: '' }) === null)
+
+const final = asrEventFromNative({ state: 'final', text: 'погода на завтра', onDevice: true })
+check(
+  'итог приходит с текстом и источником распознавания',
+  final?.kind === 'final' && final.text === 'погода на завтра' && final.onDevice === true,
+)
+const finalEmpty = asrEventFromNative({ state: 'final' })
+check(
+  'пустой итог не выдумывает текст',
+  finalEmpty?.kind === 'final' && finalEmpty.text === null && finalEmpty.onDevice === false,
+)
+const finalSystem = asrEventFromNative({ state: 'final', text: 'да' })
+check(
+  'без флага офлайна итог считается системным',
+  finalSystem?.kind === 'final' && finalSystem.onDevice === false,
+)
+check(
+  'незнакомые состояния не доходят до интерфейса',
+  asrEventFromNative({ state: 'audio-level' }) === null && asrEventFromNative({}) === null,
+)
+
+const failed = asrEventFromNative({ state: 'error', code: 'NO_MATCH' })
+check(
+  'ошибка приходит понятной фразой, а не кодом',
+  failed?.kind === 'error' && failed.message === asrErrorMessage('NO_MATCH'),
+)
+const cancelUser = asrEventFromNative({ state: 'cancelled' })
+const cancelLifecycle = asrEventFromNative({ state: 'cancelled', reason: 'lifecycle' })
+check(
+  'отмена пользователем отличается от ухода в фон',
+  cancelUser?.kind === 'cancelled' &&
+    cancelUser.reason === 'user' &&
+    cancelLifecycle?.kind === 'cancelled' &&
+    cancelLifecycle.reason === 'lifecycle',
+)
+
+// ── Тексты: что видит пользователь ─────────────────────────────────────
+
+const codes = ['NO_MATCH', 'SILENCE', 'NETWORK', 'PERMISSION_DENIED', 'BUSY', 'AUDIO', 'SERVER', 'NO_START', 'NO_RESULT']
+check(
+  'каждый код ошибки сервиса объяснён словами',
+  codes.every((code) => asrErrorMessage(code).length > 15 && asrErrorMessage(code) !== asrErrorMessage('НЕИЗВЕСТНО')),
+)
+check(
+  'неизвестный код даёт общую фразу',
+  asrErrorMessage() === 'Не удалось распознать речь.' && asrErrorMessage('ЧТО-ТО') === asrErrorMessage(),
+)
+check('сетевая ошибка напоминает про офлайн-пакет', /офлайн-пакет/.test(asrErrorMessage('NETWORK')))
+check('отказ в микрофоне отправляет в настройки Android', /настройках Android/i.test(asrErrorMessage('PERMISSION_DENIED')))
+check('подпись кнопки в покое объясняет тапы', describeDictationButton(false).includes(DICTATION_TAP_HINT))
+check('во время записи кнопка говорит «закончить»', describeDictationButton(true) === 'Закончить запись')
+check(
+  'источник распознавания называется словами',
+  describeDictationSource(true).includes('офлайн') && describeDictationSource(false).includes('системный'),
+)
+check(
+  'нет сервиса распознавания — понятное сообщение, не тишина',
+  describeAsrUnavailable({ available: false, reason: 'no-service' })?.includes('недоступно') === true &&
+    describeAsrUnavailable(null)?.includes('недоступно') === true,
+)
+check(
+  'в браузере сказано, что голосовой ввод живёт в приложении',
+  describeAsrUnavailable({ available: false, reason: 'unsupported' })?.includes('Android') === true,
+)
+check('сервис есть — сообщений нет', describeAsrUnavailable({ available: true }) === null)
+check(
+  'отказ в доступе объясняет, что включить',
+  /микрофон/.test(describeMicDenied()) && /Разрешения/.test(describeMicDenied()),
+)
+check('сетевой сервис предупреждает о сети', /сеть/.test(describeDictationNetwork()))
+check('язык распознавания — русский', ASR_LANGUAGE === 'ru-RU')
+check('автостоп по тишине настроен', ASR_SILENCE_MS > 0 && ASR_SILENCE_MS <= 3000)
+
+// ── Платформа: без плагина всё остаётся живым ──────────────────────────
+
+check('в Node системного распознавания нет', !asrSupported() && !nativeAsrAvailable())
+const nativeInfo = await nativeAsrInfo()
+check(
+  'проверка без плагина не бросает: сервиса нет',
+  nativeInfo.available === false && nativeInfo.reason === 'NO_SERVICE',
+)
+const probed = await probeAsr()
+check('в веб-сборке распознавание считается недоступным', probed.available === false && probed.reason === 'unsupported')
+check('разрешение в веб-сборке не выдаётся', (await requestMicAccess()) === 'denied')
+
+let quiet = true
+try {
+  await stopDictation()
+  await cancelDictation()
+} catch {
+  quiet = false
+}
+check('«закончить» и «отменить» без записи ничего не ломают', quiet)
+
+// ── Состояние сессии: чистое применение событий ────────────────────────
+
+const emptySession: DictationDraft = { base: 'уже было', partial: '', result: null, onDevice: false }
+const said = reduceDictation(emptySession, { kind: 'partial', text: 'погода' })
+check('частичный текст сразу виден в поле', said.partial === 'погода')
+check(
+  'во время речи поле показывает текст вместе с распознанным',
+  dictationValue({ ...said, status: 'listening' }) === 'уже было погода',
+)
+
+const done = reduceDictation(said, { kind: 'final', text: 'погода на завтра', onDevice: true })
+check('итог сервиса замещает частичный текст', done.result?.text === 'погода на завтра' && done.partial === '')
+check('источник распознавания запоминается', done.onDevice === true)
+check(
+  'итог приклеивается к тому, что было в поле',
+  dictationValue({ ...done, status: 'idle' }) === 'уже было погода на завтра',
+)
+
+const emptyFinal = reduceDictation(said, { kind: 'final', text: null, onDevice: false })
+check('пустой итог не теряет уже распознанное', emptyFinal.result?.text === 'погода')
+check(
+  'совсем без текста итога нет',
+  reduceDictation(emptySession, { kind: 'final', text: '   ', onDevice: false }).result === null,
+)
+check(
+  'ошибка сервиса не оставляет текста в поле',
+  reduceDictation(said, { kind: 'error', message: 'нет сети' }).result === null &&
+    reduceDictation(said, { kind: 'error', message: 'нет сети' }).partial === '',
+)
+check(
+  'отмена выбрасывает распознанное',
+  reduceDictation(said, { kind: 'cancelled', reason: 'user' }).result === null &&
+    reduceDictation(said, { kind: 'cancelled', reason: 'user' }).partial === '',
+)
+check(
+  'уход в фон не теряет уже распознанное',
+  reduceDictation(said, { kind: 'cancelled', reason: 'lifecycle' }).result?.text === 'погода',
+)
+check(
+  'готовность, речь и тишина текст не меняют',
+  reduceDictation(said, { kind: 'ready' }) === said &&
+    reduceDictation(said, { kind: 'speech' }) === said &&
+    reduceDictation(said, { kind: 'silence' }) === said,
+)
+
+// ── Склейка с тем, что уже напечатано ─────────────────────────────────
+
+check('пустое поле — только речь', composeDictation('', 'привет') === 'привет')
+check('к тексту без пробела добавляется пробел', composeDictation('как дела', 'хорошо') === 'как дела хорошо')
+check(
+  'после пробела или переноса пробел не удваивается',
+  composeDictation('конец ', 'дальше') === 'конец дальше' &&
+    composeDictation('строка\n', 'дальше') === 'строка\nдальше',
+)
+check('без распознанного текста поле не меняется', composeDictation('текст', '   ') === 'текст')
+check(
+  'в покое без результата поле живёт своей жизнью',
+  dictationValue({ status: 'idle', base: 'a', partial: 'b', result: null }) === null,
+)
+check(
+  'в покое с результатом поле обновляется',
+  dictationValue({ status: 'idle', base: 'a', partial: '', result: { base: 'a', text: 'b' } }) === 'a b',
+)
+check(
+  'во время записи поле обновляется по частичным результатам',
+  dictationValue({ status: 'listening', base: 'a', partial: 'b', result: null }) === 'a b',
+)
+
+// ── Стор диктовки ──────────────────────────────────────────────────────
+
+// `notify` планирует скрытие подсказки через `window.setTimeout`, а в Node окна
+// нет: подставляем минимальную заглушку (так же, как в checks/tts.check.ts).
+const fakeGlobal = globalThis as Record<string, unknown>
+fakeGlobal.window ??= globalThis
+
+check('в браузере кнопка микрофона не положена', !canDictate(useDictation.getState().info))
+await useDictation.getState().ensureProbe()
+const unsupported = useDictation.getState().info
+check(
+  'проверка записала в стор: распознавания нет',
+  unsupported?.available === false && unsupported?.reason === 'unsupported',
+)
+check('при недоступности запись не начинается', canDictate(unsupported) === false)
+
+const toastsBefore = useToasts.getState().items.length
+await useDictation.getState().start('черновик')
+check(
+  'тап по микрофону без сервиса не оставляет «запись идёт»',
+  useDictation.getState().status === 'idle' && useDictation.getState().partial === '',
+)
+check(
+  'и объясняет, что печатать текстом (а не молчит)',
+  useToasts
+    .getState()
+    .items.slice(toastsBefore)
+    .some((toast) => /Android/.test(toast.message)),
+)
+
+await useDictation.getState().stop()
+check('«закончить» без записи ничего не меняет', useDictation.getState().status === 'idle')
+await useDictation.getState().cancel()
+check('«отменить» без записи ничего не ломает', useDictation.getState().status === 'idle')
+await useDictation.getState().release()
+check('уход в фон без записи тоже безопасен', useDictation.getState().status === 'idle')
+
+useDictation.setState({ base: 'уже было', result: { base: 'уже было', text: 'привет' } })
+useDictation.getState().acknowledge()
+check(
+  'поле забрало распознанное — сессия закрыта',
+  useDictation.getState().result === null && useDictation.getState().base === '',
+)
+
+// ── Android: системное распознавание, офлайн и разрешение ──────────────
+
+const manifest = androidSource('app/src/main/AndroidManifest.xml')
+check(
+  'в манифесте запрошен доступ к микрофону',
+  /<uses-permission[^>]*android\.permission\.RECORD_AUDIO/.test(manifest),
+)
+
+const plugin = androidSource('app/src/main/java/app/synth/hub/SpeechPlugin.java')
+check('распознавание идёт через системный SpeechRecognizer', plugin.includes('SpeechRecognizer'))
+check('на API 31+ берётся офлайн-сервис устройства', plugin.includes('createOnDeviceSpeechRecognizer'))
+check('перед этим проверяется наличие офлайн-пакета', plugin.includes('isOnDeviceRecognitionAvailable'))
+check('на старых версиях просим офлайн: EXTRA_PREFER_OFFLINE', plugin.includes('EXTRA_PREFER_OFFLINE'))
+check('частичные результаты запрошены у сервиса', plugin.includes('EXTRA_PARTIAL_RESULTS'))
+check('автостоп по тишине передан сервису', plugin.includes('EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS'))
+check('микрофон освобождается (destroy) после сессии', /\.destroy\(\)/.test(plugin))
+check(
+  'разрешение микрофона запрашивается при первом использовании',
+  plugin.includes('requestMic') && plugin.includes('RECORD_AUDIO'),
+)
+check(
+  'отмена из-за ухода в фон отличается от отмены пользователем',
+  /emitRecognition\("cancelled"[^;]*"lifecycle"\)/.test(plugin) && /"cancelled"[^;]*"user"/.test(plugin),
+)
+check('аудио не пишется на диск и не отправляется из плагина', !/OutputStream|MediaRecorder/.test(plugin))
+
+// ── Интерфейс: кнопка, отмена, уход в фон ──────────────────────────────
+
+const composer = source('ui/Composer.tsx')
+check(
+  'кнопка микрофона есть только там, где есть распознавание',
+  composer.includes('{dictationSupported && !listening && ('),
+)
+check('второй тап заканчивает запись (тап-старт вместо удержания)', composer.includes('if (listening) void stopVoice()'))
+check('во время записи есть кнопка отмены', composer.includes('title="Отменить запись и выбросить текст"'))
+check('распознанный текст виден в поле по мере речи', composer.includes('const value = dictationText ?? text'))
+check(
+  'распознанное только вставляется в поле — автоотправки нет',
+  /if \(!dictationResult\) return\s*\n\s*setText\(composeDictation\(dictationResult\.base, dictationResult\.text\)\)\s*\n\s*acknowledgeVoice\(\)/.test(
+    composer,
+  ),
+)
+check('при смене чата запись обрывается', composer.includes('void cancelVoice()'))
+check(
+  'кнопка не исчезает, а приглушается, если сервиса нет',
+  composer.includes("asrInfo && !asrReady && 'opacity-50'") &&
+    composer.includes('title={describeDictationButton(false)}'),
+)
+
+const app = source('App.tsx')
+check('уход приложения в фон обрывает запись', app.includes('onAppPause(() => void releaseDictation())'))
+
+const nativeAsr = source('lib/nativeAsr.ts')
+check('отмена отпускает микрофон плагина', /cancelRecognize/.test(nativeAsr))
+check('после сессии слушатель событий снимается', /await detachListener\(\)/.test(nativeAsr))
+
+const asrLayer = source('lib/asr.ts')
+check('события прошлых сессий игнорируются', /const alive = \(\) => session === mySession/.test(asrLayer))
+check('вне Android распознавание не стартует', /if \(!asrSupported\(\)\) return/.test(asrLayer))
+
+const dictationSources = [asrLayer, nativeAsr, source('lib/useDictation.ts')].join('\n')
+check(
+  'аудио не пишется на диск и не хранится в браузере',
+  !/MediaRecorder|localStorage|sessionStorage|Filesystem/i.test(dictationSources),
+)
+check('слой распознавания не отправляет речь на свои серверы', !/fetch\(|XMLHttpRequest|axios/i.test(dictationSources))
+
+finish()

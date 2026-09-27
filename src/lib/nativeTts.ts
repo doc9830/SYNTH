@@ -2,13 +2,16 @@ import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor
 import { isNativeApp } from './nativeShell'
 
 /**
- * Мост к локальному Android-плагину SynthTts
- * (android/app/src/main/java/app/synth/hub/TtsPlugin.java).
+ * Мост к локальному Android-плагину SynthSpeech — часть синтеза речи
+ * (android/app/src/main/java/app/synth/hub/SpeechPlugin.java).
  *
  * Плагин работает поверх системного `android.speech.tts.TextToSpeech`:
  * никаких сторонних моделей и сети, разрешения не нужны. Озвучка идёт
  * фрагментами: плагин складывает их в очередь движка и сообщает о начале
  * каждого событиями `progress`.
+ *
+ * Распознавание речи (тот же плагин, задача 07) — в src/lib/nativeAsr.ts:
+ * имя плагина SynthSpeech стало общим, потому что он отвечает за оба движка.
  */
 
 /** Причины недоступности — те же коды, что отдаёт плагин. */

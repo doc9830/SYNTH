@@ -210,7 +210,7 @@ npm run android:apk        # debug APK  → android/app/build/outputs/apk/debug/
 npm run android:release    # release APK → android/app/build/outputs/apk/release/
 ```
 
-- `applicationId`: `app.synth.hub`, название — SYNTH, версия — `1.7.0` (`android/app/build.gradle`).
+- `applicationId`: `app.synth.hub`, название — SYNTH, версия — `1.7.1` (`android/app/build.gradle`).
 - Знак приложения — минималистичная монограмма «S» на графитовом фоне: `scripts/brand.mjs` → `npm run brand`
   (PWA-иконки, `mipmap-*`, `ic_launcher_foreground`, сплэши).
 - Подпись релиза: `android/keystore.properties` + `android/synth-release.jks` (оба в `.gitignore`).

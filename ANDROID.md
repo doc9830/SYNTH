@@ -135,6 +135,12 @@ JS-обёртка — `src/lib/files.ts` (`saveTextFile`, `saveImageFile`): в A
 STT и скачиваемых весов нет — движки берутся у системы. До 1.7.0 плагин назывался `SynthTts`
 (`TtsPlugin.java`) и умел только озвучку.
 
+Имя в `registerPlugin()` на стороне JS обязано совпадать с `@CapacitorPlugin(name = "SynthSpeech")`:
+под этим именем нативный плагин и виден WebView. При расхождении Capacitor ничего внятного не
+подсказывает — на каждый вызов приходит «plugin is not implemented on android», и приложение
+считает, что движка нет (в 1.7.0 так пропала озвучка: мост TTS звал старое имя `SynthTts`, см.
+CHANGELOG 1.7.1). Соответствие держат проверки `checks/tts.check.ts` и `checks/asr.check.ts`.
+
 Озвучка: JS-обёртка — `src/lib/tts.ts`, состояние и очередь — `src/lib/useSpeech.ts`, разбор
 markdown на фрагменты — `src/lib/ttsText.ts`.
 Голосовой ввод: `src/lib/asr.ts` (платформенный слой и тексты), `src/lib/nativeAsr.ts` (мост),
@@ -267,12 +273,12 @@ markdown на фрагменты — `src/lib/ttsText.ts`.
 
 ```bash
 # 1. версия веб-бандла (попадает в appInfo → APP_VERSION)
-#    package.json → "version": "1.7.0"
+#    package.json → "version": "1.7.1"
 # 2. версия пакета
-#    android/app/build.gradle → versionCode 12, versionName "1.7.0"
+#    android/app/build.gradle → versionCode 13, versionName "1.7.1"
 npm run android:release
-cp android/app/build/outputs/apk/release/app-release.apk synth-v1.7.0.apk
-# 3. GitHub → Releases → Draft a new release: tag v1.7.0, приложить synth-v1.7.0.apk
+cp android/app/build/outputs/apk/release/app-release.apk synth-v1.7.1.apk
+# 3. GitHub → Releases → Draft a new release: tag v1.7.1, приложить synth-v1.7.1.apk
 ```
 
 После публикации релиза приложения на телефонах увидят обновление при следующем запуске.

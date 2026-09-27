@@ -1,6 +1,7 @@
 # SYNTH — Synthetic Neural & Tool Hub
 
-Универсальный чат-клиент для любого **OpenAI-совместимого API** (`/v1/models`, `/v1/chat/completions`).
+Универсальный чат-клиент для любого **OpenAI-совместимого API** (`/v1/models`, `/v1/chat/completions`)
+и **Anthropic Messages API** (`/v1/messages`) — Claude подключается отдельным «типом подключения».
 Работает как PWA в браузере и как нативное Android-приложение (Capacitor).
 Приложение не привязано к конкретному провайдеру: адрес API, ключ и модели задаются
 при первом запуске — OpenAI, OpenRouter, RuAPI, DeepSeek, Groq, Mistral, Together
@@ -73,7 +74,10 @@
 
 ### Универсальность
 - Любой OpenAI-совместимый провайдер: достаточно Base URL и ключа, список моделей подтягивается сам.
-- Пресеты провайдеров лишь подставляют адрес и подсказку, где взять ключ.
+- **Anthropic Messages API (Claude)** — отдельный «тип подключения» в настройках и мастере:
+  запросы идут в `/v1/messages`, ключ `sk-ant-…`, список моделей — из `/v1/models`. Рисование
+  картинок Claude не поддерживает, для него нужно отдельное подключение.
+- Пресеты провайдеров лишь подставляют адрес, протокол и подсказку, где взять ключ.
 - Режимы `direct` (браузер → API провайдера) и `proxy` (запросы через локальный backend,
   ключ не попадает в бандл).
 - Нативный HTTP-мост в APK: поиск и чтение страниц работают без backend, где браузер режет CORS.
@@ -129,7 +133,7 @@ OpenAI-совместимый шлюз, включая собственный.
 | `npm run build` | Прод-сборка (`tsc -b && vite build`) в `dist/` |
 | `npm run preview` | Просмотр собранной PWA локально |
 | `npm run typecheck` | Проверка типов (app + node) |
-| `npm run checks` | Смоук-проверки логики: функции, память, калькулятор (`checks/`) |
+| `npm run checks` | Смоук-проверки логики: функции, память, калькулятор, контекст, Anthropic (`checks/`) |
 | `npm run icons` | Иконки PWA в `public/` |
 | `npm run android:assets` | Иконки и сплэши Android (`mipmap-*`, `drawable-*`) |
 | `npm run brand` | Иконки PWA + Android сразу |
@@ -149,6 +153,7 @@ OpenAI-совместимый шлюз, включая собственный.
 src/
   api/            транспорт запросов (direct/proxy), список моделей, поиск, скриншоты
   providers/openai/   OpenAI-совместимый протокол: SSE-стрим, ошибки, генерация картинок
+  providers/anthropic/ Anthropic Messages API (Claude): перевод запроса/ответа, SSE-стрим, заголовки
   providers/search/   поиск: keyless (Bing RSS → DuckDuckGo → Wikipedia), Tavily, Brave, SearXNG
   tools/          инструменты модели: web_search, read_url, generate_image, calculator,
                   current_time, search_chats, remember/recall/forget
@@ -167,7 +172,7 @@ src/
                   ThinkingPanel, UpdateDialog, …
 server/           локальный backend: proxy-режим, поиск, чтение страниц (headless Chrome)
 scripts/          brand.mjs (логотип), gen-icons, gen-android-assets, mock-openai
-checks/           смоук-проверки логики (tsx): features, memory, calculator — npm run checks
+checks/           смоук-проверки логики (tsx): features, memory, calculator, context, anthropic — npm run checks
 android/          Capacitor-проект: MainActivity, UpdaterPlugin, ассеты, подпись
 ```
 
@@ -178,7 +183,7 @@ npm run android:apk        # debug APK  → android/app/build/outputs/apk/debug/
 npm run android:release    # release APK → android/app/build/outputs/apk/release/
 ```
 
-- `applicationId`: `app.synth.hub`, название — SYNTH, версия — `1.3.0` (`android/app/build.gradle`).
+- `applicationId`: `app.synth.hub`, название — SYNTH, версия — `1.4.0` (`android/app/build.gradle`).
 - Знак приложения — минималистичная монограмма «S» на графитовом фоне: `scripts/brand.mjs` → `npm run brand`
   (PWA-иконки, `mipmap-*`, `ic_launcher_foreground`, сплэши).
 - Подпись релиза: `android/keystore.properties` + `android/synth-release.jks` (оба в `.gitignore`).

@@ -1,16 +1,26 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { fileToAttachment, isImageFile } from '@/lib/attachments'
 import { PRIMARY_FEATURES, isFeatureOn, setFeature, type Feature } from '@/lib/features'
+import { isAndroidDevice } from '@/lib/nativeShell'
 import { useSettings } from '@/lib/settings'
 import { getModelCapabilities } from '@/lib/utils'
 import { notify } from '@/lib/toast'
 import type { ImageAttachment } from '@/types'
 import { cn } from '@/lib/utils'
-import { IconImage, IconPaperclip, IconSend, IconSliders, IconStop, IconUpload, IconX } from './icons'
+import { IconImage, IconPaperclip, IconSend, IconSettings, IconStop, IconUpload, IconX } from './icons'
 import { Sheet } from './Sheet'
 
 /** Черновики по чатам: переключение чата не должно терять набранный текст. */
 const drafts = new Map<string, string>()
+
+/**
+ * На Android Enter всегда переносит строку, а отправляет кнопка со стрелкой.
+ *
+ * Мягкая клавиатура Android держит Enter как основную кнопку ввода: раньше
+ * сообщение улетало сразу, и написать текст в несколько строк было нельзя.
+ * Настройка «Enter отправляет сообщение» остаётся для десктопа.
+ */
+const ENTER_INSERTS_NEWLINE = isAndroidDevice()
 
 interface ComposerProps {
   conversationId: string | null
@@ -110,6 +120,8 @@ export function Composer({
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return
+    // Android: Enter — всегда перенос строки, ничего не перехватываем.
+    if (ENTER_INSERTS_NEWLINE) return
     const combo = sendOnEnter
       ? e.key === 'Enter' && !e.shiftKey
       : e.key === 'Enter' && (e.metaKey || e.ctrlKey)
@@ -205,7 +217,14 @@ export function Composer({
             rows={1}
             placeholder={canSend ? 'Спросите что-нибудь…' : 'Сначала заполните настройки подключения'}
             disabled={!canSend}
-            title={sendOnEnter ? 'Enter — отправить, Shift+Enter — новая строка' : 'Ctrl/Cmd+Enter — отправить'}
+            enterKeyHint="enter"
+            title={
+              ENTER_INSERTS_NEWLINE
+                ? 'Отправляет стрелка справа, Enter — новая строка'
+                : sendOnEnter
+                  ? 'Enter — отправить, Shift+Enter — новая строка'
+                  : 'Ctrl/Cmd+Enter — отправить'
+            }
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
@@ -234,23 +253,27 @@ export function Composer({
           )}
         </div>
 
-        <div className="mt-2 flex items-center gap-1.5 overflow-x-auto pb-0.5">
-          {PRIMARY_FEATURES.map((feature) => (
-            <FeatureChip
-              key={feature.id}
-              feature={feature}
-              on={isFeatureOn(settings, feature)}
-              onToggle={() => setFeature(feature, !isFeatureOn(settings, feature))}
-            />
-          ))}
+        {/* Чипы прокручиваются по горизонтали, а шестерёнка закреплена справа:
+            раньше кнопка «Настроить» с текстом уезжала за край экрана. */}
+        <div className="mt-2 flex items-center gap-1.5">
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto pb-0.5">
+            {PRIMARY_FEATURES.map((feature) => (
+              <FeatureChip
+                key={feature.id}
+                feature={feature}
+                on={isFeatureOn(settings, feature)}
+                onToggle={() => setFeature(feature, !isFeatureOn(settings, feature))}
+              />
+            ))}
+          </div>
           <button
             type="button"
             onClick={onOpenFeatures}
-            title="Все функции: память, инструменты, вид ленты"
-            className="inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-full border border-dashed border-neutral-300 px-2.5 text-[11.5px] text-neutral-600 transition active:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-300 dark:active:bg-neutral-800"
+            title="Функции и настройки: память, инструменты, поиск"
+            aria-label="Функции и настройки"
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-dashed border-neutral-300 text-neutral-500 transition active:bg-neutral-200/70 dark:border-neutral-600 dark:text-neutral-400 dark:active:bg-neutral-800"
           >
-            <IconSliders size={13} />
-            Настроить
+            <IconSettings size={15} />
           </button>
         </div>
       </div>

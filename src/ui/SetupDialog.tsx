@@ -1,18 +1,26 @@
 import { useEffect, useState } from 'react'
 import { useModelCatalog } from '@/lib/modelCatalog'
-import { PROVIDER_PRESETS, presetById, presetByBaseUrl } from '@/lib/providerPresets'
-import { useSettings } from '@/lib/settings'
+import {
+  PROVIDER_PRESETS,
+  looksLikeAnthropic,
+  presetByBaseUrl,
+  presetById,
+  presetProtocol,
+} from '@/lib/providerPresets'
+import { PROTOCOL_LABELS, useSettings, type ConnectionProtocol } from '@/lib/settings'
 import { notify } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import { IconAlert, IconCheck, IconRefresh } from './icons'
 import { ModelSelect } from './ModelSelect'
+import { Segmented } from './Segmented'
 import { Sheet } from './Sheet'
 import { btnCls, btnPrimaryCls, inputCls } from './controls'
 
 /**
- * Мастер первого запуска: два шага — подключение (Base URL + API key) и модели.
- * Универсально: подходит любому OpenAI-совместимому провайдеру, пресеты лишь
- * подставляют адрес. Ключ и настройки остаются на устройстве.
+ * Мастер первого запуска: два шага — подключение (тип подключения, Base URL,
+ * API key) и модели. Универсально: подходит любому OpenAI-совместимому
+ * провайдеру и Claude Messages API, пресеты лишь подставляют адрес и протокол.
+ * Ключ и настройки остаются на устройстве.
  */
 
 const primaryBtn = cn(btnPrimaryCls, 'w-full')
@@ -33,6 +41,7 @@ export function SetupDialog({ open, onClose, firstRun = false }: SetupDialogProp
 
   const [step, setStep] = useState<0 | 1>(0)
   const [providerId, setProviderId] = useState(settings.providerId)
+  const [protocol, setProtocol] = useState<ConnectionProtocol>(settings.protocol)
   const [baseUrl, setBaseUrl] = useState(settings.baseUrl)
   const [apiKey, setApiKey] = useState(settings.apiKey)
   const [model, setModel] = useState(settings.model)
@@ -49,6 +58,7 @@ export function SetupDialog({ open, onClose, firstRun = false }: SetupDialogProp
     setStep(0)
     setError(null)
     setProviderId(settings.providerId)
+    setProtocol(settings.protocol)
     setBaseUrl(settings.baseUrl)
     setApiKey(settings.apiKey)
     setModel(settings.model)
@@ -61,6 +71,12 @@ export function SetupDialog({ open, onClose, firstRun = false }: SetupDialogProp
 
   /** Шаг 1: сохраняем доступ и сразу проверяем его запросом /v1/models. */
   const connect = async () => {
+    if (protocol === 'anthropic' && settings.mode === 'proxy') {
+      setError(
+        'Claude работает только в direct-режиме: наш backend говорит на OpenAI-протоколе. Выключите proxy-режим или выберите тип «OpenAI-совместимый».',
+      )
+      return
+    }
     if (settings.mode !== 'proxy' && !baseUrl.trim()) {
       setError('Укажите адрес API (Base URL) — например, https://api.openai.com/v1')
       return
@@ -71,7 +87,7 @@ export function SetupDialog({ open, onClose, firstRun = false }: SetupDialogProp
     }
     setChecking(true)
     setError(null)
-    update({ providerId, baseUrl: baseUrl.trim(), apiKey: apiKey.trim() })
+    update({ providerId, protocol, baseUrl: baseUrl.trim(), apiKey: apiKey.trim() })
     try {
       const ids = await refreshModels('chat', { force: true })
       if (!model.trim() && ids.length) setModel(ids[0])
@@ -95,11 +111,17 @@ export function SetupDialog({ open, onClose, firstRun = false }: SetupDialogProp
       setError('Выберите модель для чата.')
       return
     }
-    update({ model: model.trim(), setupDone: true })
+    // Claude не рисует: генерация картинок возможна только через отдельное
+    // подключение (OpenAI, Gemini), иначе включённый флаг даст ошибку в чате.
+    const imagesAllowed = !(protocol === 'anthropic' && settings.image.mode === 'inherit')
+    update({ model: model.trim(), protocol, setupDone: true })
     updateSection('image', {
-      enabled: imageEnabled && Boolean(imageModel.trim()),
+      enabled: imageEnabled && Boolean(imageModel.trim()) && imagesAllowed,
       model: imageModel.trim(),
     })
+    if (imageEnabled && !imagesAllowed) {
+      notify('Картинки выключены: Claude их не рисует — задайте отдельное подключение для картинок.', 'info')
+    }
     notify('Готово — можно общаться', 'success')
     onClose()
   }
@@ -168,6 +190,8 @@ export function SetupDialog({ open, onClose, firstRun = false }: SetupDialogProp
                   onClick={() => {
                     setProviderId(p.id)
                     if (p.baseUrl) setBaseUrl(p.baseUrl)
+                    // пресет Claude подставляет свой протокол, остальные — OpenAI
+                    setProtocol(presetProtocol(p))
                   }}
                   className={cn(
                     'rounded-full border px-3 py-1.5 text-xs transition',
@@ -182,11 +206,32 @@ export function SetupDialog({ open, onClose, firstRun = false }: SetupDialogProp
             </div>
           </div>
 
+          <div>
+            <div className="mb-1.5 text-xs font-medium text-neutral-600 dark:text-neutral-300">
+              Тип подключения
+            </div>
+            <Segmented
+              value={protocol}
+              onChange={setProtocol}
+              options={[
+                { value: 'openai', label: PROTOCOL_LABELS.openai },
+                { value: 'anthropic', label: 'Anthropic (Claude)' },
+              ]}
+            />
+            <span className="mt-1 block text-[11px] text-neutral-500 dark:text-neutral-400">
+              {protocol === 'anthropic'
+                ? 'Родной протокол Claude (Messages API). Ключ начинается на sk-ant-, адрес — https://api.anthropic.com/v1.'
+                : 'Подходит большинству провайдеров, шлюзов и локальных серверов (Ollama, LM Studio).'}
+            </span>
+          </div>
+
           {settings.mode === 'proxy' ? (
             <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800/60 dark:text-neutral-300">
               Включён proxy-режим: адрес API и ключ задаются на сервере (PROVIDER_BASE_URL и
               PROVIDER_API_KEY в .env). Убедитесь, что backend запущен, и нажмите «Проверить и
               продолжить».
+              {protocol === 'anthropic' &&
+                ' Claude в proxy-режиме недоступен: backend говорит на OpenAI-протоколе — выберите тип «OpenAI-совместимый».'}
             </div>
           ) : (
             <>
@@ -197,8 +242,12 @@ export function SetupDialog({ open, onClose, firstRun = false }: SetupDialogProp
                 <input
                   value={baseUrl}
                   onChange={(e) => {
-                    setBaseUrl(e.target.value)
-                    setProviderId(presetByBaseUrl(e.target.value)?.id ?? 'custom')
+                    const value = e.target.value
+                    setBaseUrl(value)
+                    setProviderId(presetByBaseUrl(value)?.id ?? 'custom')
+                    // адрес Anthropic → сразу переключаем протокол: иначе Claude
+                    // ответит 404 на /chat/completions
+                    if (looksLikeAnthropic(value)) setProtocol('anthropic')
                   }}
                   placeholder="https://api.openai.com/v1"
                   className={inputCls}
@@ -207,7 +256,8 @@ export function SetupDialog({ open, onClose, firstRun = false }: SetupDialogProp
                   inputMode="url"
                 />
                 <span className="mt-1 block text-[11px] text-neutral-500 dark:text-neutral-400">
-                  Адрес OpenAI-совместимого API — обычно оканчивается на /v1.
+                  Адрес API вместе с версией — обычно оканчивается на /v1. Для Claude это
+                  https://api.anthropic.com/v1.
                 </span>
               </label>
 
@@ -220,7 +270,7 @@ export function SetupDialog({ open, onClose, firstRun = false }: SetupDialogProp
                     type={showKey ? 'text' : 'password'}
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="sk-…"
+                    placeholder={protocol === 'anthropic' ? 'sk-ant-…' : 'sk-…'}
                     className={inputCls}
                     spellCheck={false}
                     autoComplete="off"
@@ -231,6 +281,7 @@ export function SetupDialog({ open, onClose, firstRun = false }: SetupDialogProp
                 </div>
                 <span className="mt-1 block text-[11px] text-neutral-500 dark:text-neutral-400">
                   Ключ уходит только в выбранный вами API и хранится локально.
+                  {protocol === 'anthropic' ? ' Ключ Claude начинается на sk-ant-.' : ''}
                   {preset?.keyUrl ? (
                     <>
                       {' '}
@@ -304,6 +355,14 @@ export function SetupDialog({ open, onClose, firstRun = false }: SetupDialogProp
               </div>
             )}
           </div>
+
+          {protocol === 'anthropic' && (
+            <div className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">
+              Claude картинки не рисует — генерация изображений заработает только через отдельное
+              подключение (OpenAI, Gemini и подобные). Его можно задать позже в Настройки →
+              Подключение → Генерация изображений.
+            </div>
+          )}
 
           {error && (
             <div className="flex items-start gap-2 rounded-xl border border-red-300 bg-red-50 p-3 text-xs text-red-800 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-100">

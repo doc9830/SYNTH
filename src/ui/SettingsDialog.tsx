@@ -3,9 +3,16 @@ import { APP_NAME, APP_TAGLINE, APP_VERSION, RELEASES_URL } from '@/lib/appInfo'
 import { estimateStorage } from '@/lib/db'
 import { memoryStats, useMemory } from '@/lib/memory'
 import { useModelCatalog } from '@/lib/modelCatalog'
-import { PROVIDER_PRESETS, presetById } from '@/lib/providerPresets'
+import { isAndroidDevice } from '@/lib/nativeShell'
+import {
+  PROVIDER_PRESETS,
+  looksLikeAnthropic,
+  presetByBaseUrl,
+  presetById,
+  presetProtocol,
+} from '@/lib/providerPresets'
 import { getReadiness } from '@/lib/readiness'
-import { sanitizeContextWindow, useSettings } from '@/lib/settings'
+import { PROTOCOL_LABELS, sanitizeContextWindow, useSettings } from '@/lib/settings'
 import { notify } from '@/lib/toast'
 import { useUpdateStore } from '@/lib/updateStore'
 import { cn } from '@/lib/utils'
@@ -14,6 +21,7 @@ import { KEYLESS_ENGINE_LABELS } from '@/providers/search'
 import type { KeylessEngine } from '@/types'
 import { IconAlert, IconBug, IconCheck, IconDownload, IconRefresh, IconTrash, IconX } from './icons'
 import { ModelSelect } from './ModelSelect'
+import { Segmented } from './Segmented'
 import { btnCls, inputCls } from './controls'
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
@@ -64,36 +72,6 @@ function Toggle({
   )
 }
 
-function Segmented<T extends string>({
-  value,
-  options,
-  onChange,
-}: {
-  value: T
-  options: Array<{ value: T; label: string }>
-  onChange: (v: T) => void
-}) {
-  return (
-    <div className="flex gap-1 rounded-xl bg-neutral-100 p-1 dark:bg-neutral-800">
-      {options.map((o) => (
-        <button
-          key={o.value}
-          type="button"
-          onClick={() => onChange(o.value)}
-          className={cn(
-            'flex-1 rounded-lg px-2 py-1.5 text-xs transition',
-            value === o.value
-              ? 'bg-white font-medium text-neutral-900 shadow-sm dark:bg-neutral-700 dark:text-white'
-              : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-white',
-          )}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  )
-}
-
 const TABS = [
   { id: 'api', label: 'Подключение' },
   { id: 'search', label: 'Поиск' },
@@ -103,6 +81,13 @@ const TABS = [
 ] as const
 
 type TabId = (typeof TABS)[number]['id']
+
+/**
+ * На Android отправка идёт кнопкой со стрелкой, а Enter переносит строку —
+ * настройка «Enter отправляет» там не действует, поэтому вместо переключателя
+ * показываем пояснение.
+ */
+const ANDROID_KEYBOARD = isAndroidDevice()
 
 interface SettingsDialogProps {
   open: boolean
@@ -251,8 +236,33 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
               </Field>
 
               <Field
+                label="Тип подключения"
+                hint="Как приложение общается с API. «OpenAI-совместимый» понимает большинство провайдеров, шлюзов и локальных серверов; «Anthropic (Claude)» — родной протокол Claude (Messages API, ключ x-api-key)."
+              >
+                <Segmented
+                  value={settings.protocol}
+                  onChange={(protocol) => {
+                    update({ protocol })
+                    // у протоколов разные списки моделей — тянем актуальный сразу
+                    void refreshModels('chat', { force: true }).catch(() => undefined)
+                  }}
+                  options={[
+                    { value: 'openai', label: PROTOCOL_LABELS.openai },
+                    { value: 'anthropic', label: 'Anthropic (Claude)' },
+                  ]}
+                />
+              </Field>
+
+              {settings.protocol === 'anthropic' && settings.mode === 'proxy' && (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">
+                  Claude работает в direct-режиме: наш backend говорит на OpenAI-протоколе. Переключите
+                  режим подключения на direct.
+                </div>
+              )}
+
+              <Field
                 label="Провайдер"
-                hint="Пресет подставит адрес API. SYNTH работает с любым OpenAI-совместимым провайдером — выберите «Другой / свой адрес», чтобы ввести Base URL вручную."
+                hint="Пресет подставит адрес API и тип подключения. SYNTH работает с любым OpenAI-совместимым провайдером — выберите «Другой / свой адрес», чтобы ввести Base URL вручную."
               >
                 <select
                   value={settings.providerId}
@@ -261,6 +271,8 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
                     update({
                       providerId: e.target.value,
                       ...(preset && preset.baseUrl ? { baseUrl: preset.baseUrl } : {}),
+                      // у пресета Claude — свой протокол, иначе снова OpenAI
+                      ...(preset ? { protocol: presetProtocol(preset) } : {}),
                     })
                   }}
                   className={inputCls}
@@ -278,13 +290,26 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
                 hint={
                   settings.mode === 'proxy'
                     ? 'В proxy-режиме адрес задаётся на сервере (PROVIDER_BASE_URL в .env).'
-                    : 'Адрес API вместе с версией — обычно оканчивается на /v1.'
+                    : 'Адрес API вместе с версией — обычно оканчивается на /v1. Для Claude — https://api.anthropic.com/v1.'
                 }
               >
                 <input
                   value={settings.baseUrl}
                   disabled={settings.mode === 'proxy'}
-                  onChange={(e) => update({ baseUrl: e.target.value })}
+                  onChange={(e) => {
+                    const baseUrl = e.target.value
+                    // Адрес Anthropic подключаем нужным протоколом автоматически:
+                    // иначе Claude ответит 404 на /chat/completions.
+                    if (looksLikeAnthropic(baseUrl)) {
+                      update({
+                        baseUrl,
+                        protocol: 'anthropic',
+                        providerId: presetByBaseUrl(baseUrl)?.id ?? 'custom',
+                      })
+                      return
+                    }
+                    update({ baseUrl })
+                  }}
                   placeholder="https://api.openai.com/v1"
                   className={cn(inputCls, settings.mode === 'proxy' && 'opacity-60')}
                   spellCheck={false}
@@ -322,7 +347,11 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
 
               <Field
                 label="Model"
-                hint="Список берётся из GET /v1/models настроенного подключения: выберите модель из списка или задайте id вручную."
+                hint={
+                  settings.protocol === 'anthropic'
+                    ? 'Список берётся из GET /v1/models Anthropic (там только модели Claude). Нужной нет — введите id вручную, например claude-sonnet-4-5.'
+                    : 'Список берётся из GET /v1/models настроенного подключения: выберите модель из списка или задайте id вручную.'
+                }
               >
                 <ModelSelect kind="chat" value={settings.model} onChange={(model) => update({ model })} />
               </Field>
@@ -649,8 +678,8 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
           {tab === 'functions' && (
             <>
               <p className="rounded-xl bg-neutral-100 px-3 py-2 text-[11px] leading-relaxed text-neutral-600 dark:bg-neutral-800/60 dark:text-neutral-300">
-                Включать функции удобнее в композере — кнопка «Настроить» под полем ввода, она же
-                доступна в меню «⋮» в шапке чата. Здесь — подробные параметры инструментов и памяти.
+                Включать функции удобнее в композере — шестерёнка под полем ввода (справа от чипов),
+                она же доступна в меню «⋮» в шапке чата. Здесь — подробные параметры инструментов и памяти.
               </p>
 
               <div className="space-y-1 rounded-xl border border-neutral-200 px-3 py-2 dark:border-neutral-800">
@@ -778,12 +807,19 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
                   checked={settings.ui.showToolActivity}
                   onChange={(showToolActivity) => updateSection('ui', { showToolActivity })}
                 />
-                <Toggle
-                  label="Enter отправляет сообщение"
-                  hint="Иначе отправка — Ctrl/Cmd+Enter, а Enter переносит строку."
-                  checked={settings.ui.sendOnEnter}
-                  onChange={(sendOnEnter) => updateSection('ui', { sendOnEnter })}
-                />
+                {ANDROID_KEYBOARD ? (
+                  <p className="px-1 py-1.5 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-400">
+                    В приложении на Android Enter переносит строку, а отправляет круглая кнопка со
+                    стрелкой рядом с полем ввода.
+                  </p>
+                ) : (
+                  <Toggle
+                    label="Enter отправляет сообщение"
+                    hint="Иначе отправка — Ctrl/Cmd+Enter, а Enter переносит строку."
+                    checked={settings.ui.sendOnEnter}
+                    onChange={(sendOnEnter) => updateSection('ui', { sendOnEnter })}
+                  />
+                )}
               </div>
             </>
           )}

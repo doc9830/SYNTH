@@ -93,7 +93,9 @@ function UserMessage({
 
   return (
     <div className="group flex justify-end">
-      <div className="flex max-w-[min(46rem,88%)] flex-col items-end gap-1">
+      {/* Пузырь заметно уже колонки чтения: видно, что это сообщение справа,
+          а не текст во всю ширину экрана. */}
+      <div className="flex max-w-[min(34rem,86%)] flex-col items-end gap-1">
         {attachments.length > 0 && (
           <div className="flex flex-wrap justify-end gap-2">
             {attachments.map((a) => (
@@ -149,7 +151,7 @@ function UserMessage({
             </div>
           </div>
         ) : (
-          <div className="rounded-2xl rounded-br-md bg-neutral-100 px-3.5 py-2 text-[15px] leading-relaxed whitespace-pre-wrap text-neutral-900 dark:bg-neutral-800 dark:text-neutral-50">
+          <div className="rounded-2xl rounded-br-md border border-neutral-200/80 bg-neutral-100 px-3.5 py-2 text-[15px] leading-relaxed whitespace-pre-wrap text-neutral-900 dark:border-neutral-700/70 dark:bg-neutral-800 dark:text-neutral-50">
             {message.content || <span className="opacity-70">(только вложение)</span>}
           </div>
         )}

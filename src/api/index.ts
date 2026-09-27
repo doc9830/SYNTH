@@ -12,7 +12,13 @@ import {
 import type { AssistantTurn, WireMessage, WireTool } from '@/providers/openai/types'
 import type { ModelInfo } from '@/providers/openai/client'
 import { createSearchProvider } from '@/providers/search'
-import { resolveTransport, toOpenAiTransport, type ResolvedTransport, type TransportKind } from './transport'
+import {
+  resolveTransport,
+  toAnthropicTransport,
+  toOpenAiTransport,
+  type ResolvedTransport,
+  type TransportKind,
+} from './transport'
 
 export * from './transport'
 
@@ -48,28 +54,43 @@ export async function chatTurn(
   settings: Settings,
   req: ChatTurnRequest,
 ): Promise<AssistantTurn> {
-  const transport = toOpenAiTransport(resolve(settings))
-  return streamChatCompletion(
-    transport,
-    {
-      model: settings.model,
-      messages: req.messages,
-      stream: req.stream !== false,
-      tools: req.tools,
-      temperature: req.temperature ?? settings.temperature,
-      max_tokens: req.maxTokens ?? settings.maxTokens ?? undefined,
-      stream_options: { include_usage: true },
-    },
-    { signal: req.signal, handlers: req.handlers },
-  )
+  const resolved = resolve(settings)
+  const body = {
+    model: settings.model,
+    messages: req.messages,
+    stream: req.stream !== false,
+    tools: req.tools,
+    temperature: req.temperature ?? settings.temperature,
+    max_tokens: req.maxTokens ?? settings.maxTokens ?? undefined,
+    stream_options: { include_usage: true },
+  }
+
+  // Тип подключения «Anthropic (Claude)»: тело запроса и поток переводит
+  // providers/anthropic, наружу — тот же AssistantTurn. Поэтому agent loop,
+  // инструменты и метр контекста работают без изменений.
+  if (settings.protocol === 'anthropic') {
+    const { streamAnthropicMessages } = await import('@/providers/anthropic/client')
+    return streamAnthropicMessages(toAnthropicTransport(resolved), body, {
+      signal: req.signal,
+      handlers: req.handlers,
+    })
+  }
+
+  return streamChatCompletion(toOpenAiTransport(resolved), body, {
+    signal: req.signal,
+    handlers: req.handlers,
+  })
 }
 
 /** Список моделей: GET /v1/models (или /api/models в proxy-режиме). */
 export async function listModels(settings: Settings, signal?: AbortSignal): Promise<string[]> {
   const resolved = resolve(settings)
-  const transport: OpenAiTransport = toOpenAiTransport(resolved)
+  if (settings.protocol === 'anthropic') {
+    const { fetchAnthropicModels } = await import('@/providers/anthropic/client')
+    return fetchAnthropicModels(toAnthropicTransport(resolved), signal)
+  }
   const { fetchModelIds } = await import('@/providers/openai/client')
-  return fetchModelIds(transport, signal)
+  return fetchModelIds(toOpenAiTransport(resolved), signal)
 }
 
 /**
@@ -84,6 +105,12 @@ export async function listModelInfos(
   kind: TransportKind = 'chat',
 ): Promise<ModelInfo[]> {
   const resolved = resolve(settings, kind)
+  // Claude отдаёт модели без цен — id достаточно, селектор сам их покажет.
+  if (settings.protocol === 'anthropic' && kind === 'chat') {
+    const { fetchAnthropicModels } = await import('@/providers/anthropic/client')
+    const ids = await fetchAnthropicModels(toAnthropicTransport(resolved), signal)
+    return ids.map((id) => ({ id }))
+  }
   const transport: OpenAiTransport = toOpenAiTransport(resolved)
   const { fetchModels } = await import('@/providers/openai/client')
   return fetchModels(transport, signal)
@@ -97,19 +124,25 @@ export async function chatOnce(
   settings: Settings,
   input: { messages: WireMessages; maxTokens?: number; temperature?: number; signal?: AbortSignal },
 ): Promise<string> {
-  const transport = toOpenAiTransport(resolve(settings))
+  const resolved = resolve(settings)
+  const body = {
+    model: settings.model,
+    messages: input.messages,
+    stream: false,
+    temperature: input.temperature ?? 0,
+    max_tokens: input.maxTokens,
+  }
+
+  if (settings.protocol === 'anthropic') {
+    const { anthropicMessages } = await import('@/providers/anthropic/client')
+    const turn = await anthropicMessages(toAnthropicTransport(resolved), body, {
+      signal: input.signal,
+    })
+    return turn.content
+  }
+
   const { chatCompletion } = await import('@/providers/openai/client')
-  const turn = await chatCompletion(
-    transport,
-    {
-      model: settings.model,
-      messages: input.messages,
-      stream: false,
-      temperature: input.temperature ?? 0,
-      max_tokens: input.maxTokens,
-    },
-    { signal: input.signal },
-  )
+  const turn = await chatCompletion(toOpenAiTransport(resolved), body, { signal: input.signal })
   return turn.content
 }
 

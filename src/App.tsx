@@ -167,7 +167,6 @@ export default function App() {
           conversation={conversation}
           settings={settings}
           readiness={readiness}
-          busy={isStreaming}
           onOpenSidebar={() => setSidebarOpen(true)}
           onOpenSettings={openSettings}
           onOpenDebug={openDebug}

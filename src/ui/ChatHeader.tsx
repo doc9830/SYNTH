@@ -33,7 +33,6 @@ interface ChatHeaderProps {
   conversation: Conversation | undefined
   settings: Settings
   readiness: Readiness
-  busy: boolean
   onOpenSidebar: () => void
   onOpenSettings: () => void
   onOpenDebug: () => void
@@ -47,7 +46,6 @@ export function ChatHeader({
   conversation,
   settings,
   readiness,
-  busy,
   onOpenSidebar,
   onOpenSettings,
   onOpenDebug,
@@ -153,7 +151,6 @@ export function ChatHeader({
           </h2>
           <div className="flex items-center gap-1.5 text-[11px] text-neutral-500 dark:text-neutral-400">
             <ModelSelect kind="chat" variant="chip" value={settings.model} onChange={(model) => update({ model })} />
-            {busy && <span className="shrink-0 animate-pulse text-neutral-500 dark:text-neutral-400">генерирую…</span>}
             <ContextMeter messages={conversation?.messages ?? []} />
           </div>
         </div>

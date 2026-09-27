@@ -28,13 +28,29 @@ export interface Readiness {
 
 function checkApi(settings: Settings): ReadinessIssue[] {
   const issues: ReadinessIssue[] = []
+  const anthropic = settings.protocol === 'anthropic'
+
+  // Claude говорит на своём протоколе, а наш backend — на OpenAI-совместимом:
+  // в proxy-режиме запрос уйдёт не туда, поэтому предупреждаем заранее.
+  if (anthropic && settings.mode === 'proxy') {
+    issues.push({
+      scope: 'api',
+      severity: 'error',
+      message:
+        'Тип подключения «Anthropic (Claude)» не работает в proxy-режиме: backend отдаёт OpenAI-протокол.',
+      fix: 'Настройки → Подключение → включите direct (ключ хранится в браузере) либо выберите тип «OpenAI-совместимый», если Claude идёт через прокси-шлюз.',
+    })
+  }
+
   if (settings.mode !== 'proxy') {
     if (!settings.baseUrl.trim()) {
       issues.push({
         scope: 'api',
         severity: 'error',
         message: 'Не задан адрес API (Base URL).',
-        fix: 'Откройте «Настроить подключение» и укажите Base URL провайдера, например https://api.openai.com/v1.',
+        fix: anthropic
+          ? 'Откройте «Настроить подключение» и укажите https://api.anthropic.com/v1.'
+          : 'Откройте «Настроить подключение» и укажите Base URL провайдера, например https://api.openai.com/v1.',
       })
     } else if (!/\/v\d+\/?$/.test(settings.baseUrl.trim())) {
       issues.push({
@@ -49,7 +65,16 @@ function checkApi(settings: Settings): ReadinessIssue[] {
         scope: 'api',
         severity: 'error',
         message: 'Не задан API key.',
-        fix: 'Откройте «Настроить подключение» и вставьте ключ провайдера, либо включите proxy-режим (ключ хранится на сервере).',
+        fix: anthropic
+          ? 'Ключ Claude создаётся в console.anthropic.com → Settings → API keys и начинается на sk-ant-.'
+          : 'Откройте «Настроить подключение» и вставьте ключ провайдера, либо включите proxy-режим (ключ хранится на сервере).',
+      })
+    } else if (anthropic && !settings.apiKey.trim().startsWith('sk-ant-')) {
+      issues.push({
+        scope: 'api',
+        severity: 'warning',
+        message: 'Ключ Anthropic обычно начинается на sk-ant- — похоже, вставлен ключ другого провайдера.',
+        fix: 'Проверьте ключ в console.anthropic.com → Settings → API keys.',
       })
     }
   }
@@ -130,17 +155,28 @@ function checkSearch(settings: Settings): ReadinessIssue[] {
 function checkImage(settings: Settings): ReadinessIssue[] {
   if (!settings.image.enabled) return []
   const i: ImageSettings = settings.image
-  if (!i.model.trim()) {
-    return [
-      {
-        scope: 'image',
-        severity: 'warning',
-        message: 'Генерация изображений включена, но модель не выбрана.',
-        fix: 'Выберите модель в настройках → «Подключение» (например, gpt-image-1 или gemini-2.5-flash-image) либо отключите генерацию картинок.',
-      },
-    ]
+  const issues: ReadinessIssue[] = []
+
+  // Claude не умеет рисовать: с его протоколом картинки работают только
+  // через отдельное подключение («inherit» уходит в Claude и падает).
+  if (settings.protocol === 'anthropic' && i.mode === 'inherit') {
+    issues.push({
+      scope: 'image',
+      severity: 'warning',
+      message: 'Генерация изображений включена, но протокол Anthropic (Claude) картинки не поддерживает.',
+      fix: 'Настройки → Подключение → Генерация изображений: задайте своё подключение (OpenAI, Gemini) либо выключите генерацию картинок.',
+    })
   }
-  return []
+
+  if (!i.model.trim()) {
+    issues.push({
+      scope: 'image',
+      severity: 'warning',
+      message: 'Генерация изображений включена, но модель не выбрана.',
+      fix: 'Выберите модель в настройках → «Подключение» (например, gpt-image-1 или gemini-2.5-flash-image) либо отключите генерацию картинок.',
+    })
+  }
+  return issues
 }
 
 export function getReadiness(settings: Settings): Readiness {

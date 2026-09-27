@@ -3,6 +3,16 @@ import { persist } from 'zustand/middleware'
 import type { KeylessEngine } from '@/types'
 
 export type ConnectionMode = 'direct' | 'proxy'
+
+/**
+ * Тип подключения (протокол API):
+ *  - openai    → OpenAI-совместимый: POST /v1/chat/completions, ключ в Bearer,
+ *                инструменты через tool_calls. Так работает большинство провайдеров
+ *                и шлюзов (OpenAI, OpenRouter, DeepSeek, Groq, Ollama, прокси);
+ *  - anthropic → Claude Messages API: POST /v1/messages, ключ в x-api-key,
+ *                системный промпт отдельным полем, инструменты tool_use/tool_result.
+ */
+export type ConnectionProtocol = 'openai' | 'anthropic'
 export type ThemeMode = 'system' | 'light' | 'dark'
 export type FontSize = 'sm' | 'md' | 'lg'
 export type SearchProviderId = 'keyless' | 'tavily' | 'brave' | 'searxng'
@@ -97,6 +107,12 @@ export interface InterfaceSettings {
 
 export interface Settings {
   mode: ConnectionMode
+  /**
+   * Тип подключения: как общаться с API. Протокол OpenAI понимает почти любой
+   * провайдер, «Anthropic» нужен для Claude и его релеев — там совсем другой
+   * формат запросов (см. src/providers/anthropic).
+   */
+  protocol: ConnectionProtocol
   /** id пресета провайдера (src/lib/providerPresets.ts); 'custom' — свой адрес */
   providerId: string
   baseUrl: string
@@ -125,6 +141,9 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   mode: 'direct',
+  // Тип подключения по умолчанию — OpenAI-совместимый: его понимает
+  // большинство провайдеров, шлюзов и локальных серверов.
+  protocol: 'openai',
   providerId: 'custom',
   // Провайдер выбирает пользователь: приложение не привязано к конкретному API.
   baseUrl: '',
@@ -196,6 +215,20 @@ export function sanitizeContextWindow(value: unknown): number {
   if (!Number.isFinite(n)) return DEFAULT_SETTINGS.contextWindow
   if (n <= 0) return 0
   return Math.round(n)
+}
+
+/**
+ * Приводит тип подключения к известному значению.
+ * Незнакомое (или отсутствующее в старых сохранениях) → OpenAI-совместимый.
+ */
+export function sanitizeProtocol(value: unknown): ConnectionProtocol {
+  return value === 'anthropic' ? 'anthropic' : 'openai'
+}
+
+/** Человекочитаемое имя типа подключения — для настроек и диагностики. */
+export const PROTOCOL_LABELS: Record<ConnectionProtocol, string> = {
+  openai: 'OpenAI-совместимый',
+  anthropic: 'Anthropic (Claude)',
 }
 
 interface SettingsState {
@@ -294,6 +327,13 @@ export const useSettings = create<SettingsState>()(
           ui: { ...DEFAULT_SETTINGS.ui, ...(p.settings?.ui ?? {}) },
           // старые сохранения поля не знают → подставляем окно по умолчанию
           contextWindow: sanitizeContextWindow(p.settings?.contextWindow),
+          // Тип подключения: если пользователь уже вписал адрес Anthropic,
+          // поднимаем протокол до нужного — иначе Claude не заработает.
+          protocol:
+            p.settings?.protocol === undefined &&
+            /api\.anthropic\.com/i.test(String(p.settings?.baseUrl ?? ''))
+              ? 'anthropic'
+              : sanitizeProtocol(p.settings?.protocol),
         }
         // Уже настроенные пользователи онбординг видеть не должны.
         if (p.settings?.setupDone === undefined) {

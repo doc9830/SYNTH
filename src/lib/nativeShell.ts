@@ -26,6 +26,17 @@ export function appPlatform(): string {
   return capacitor()?.getPlatform?.() ?? 'web'
 }
 
+/**
+ * Android-устройство: APK на телефоне или браузер/WebView в Android.
+ *
+ * Нужно там, где поведение отличается от десктопа: на телефонной клавиатуре
+ * Enter должен вставлять перенос строки, а отправлять — кнопка со стрелкой.
+ */
+export function isAndroidDevice(): boolean {
+  if (appPlatform() === 'android') return true
+  return typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
+}
+
 /** Синхронизирует цвет статус-бара с темой приложения (Android/iOS). */
 export async function syncStatusBar(dark: boolean): Promise<void> {
   if (!isNativeApp()) return

@@ -7,8 +7,11 @@ import com.getcapacitor.BridgeActivity;
 public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
-        // Локальный плагин обновлений (загрузка и установка APK) — до super.onCreate()
+        // Локальные плагины (до super.onCreate):
+        //   SynthUpdater — загрузка и установка APK-обновлений;
+        //   SynthFiles   — сохранение файлов (экспорт чата, картинки) из WebView.
         registerPlugin(UpdaterPlugin.class);
+        registerPlugin(FilesPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

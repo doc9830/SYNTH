@@ -4,7 +4,7 @@
 
 - `applicationId` / `namespace`: **`app.synth.hub`**
 - Название: **SYNTH** (`android/app/src/main/res/values/strings.xml`)
-- Версия: `versionCode 2`, `versionName "1.1.0"` (`android/app/build.gradle`)
+- Версия: `versionCode 3`, `versionName "1.1.1"` (`android/app/build.gradle`)
 - minSdk 24, target/compile SDK — из `android/variables.gradle`
 
 ## Сборка
@@ -90,15 +90,59 @@ npm run android:assets   # mipmap-*/ic_launcher*, drawable-*/splash.png
    `releases/latest` на GitHub — не чаще раза в 6 часов, «пропущенные» версии не предлагаются.
 2. `UpdateDialog` показывает описание релиза; «Скачать и установить» качает APK с прогрессом
    и вызывает `install()`.
-3. Если Android ещё не разрешил установку из этого источника, приложение откроет
-   системные настройки, а после включения тумблера достаточно нажать «Установить» повторно
-   (путь к файлу сохраняется в состоянии).
+3. Если Android ещё не разрешил установку из этого источника, плагин отдаёт
+   ошибку с кодом `INSTALL_PERMISSION_REQUIRED`, приложение открывает системный экран
+   «Установка неизвестных приложений» и **само продолжает установку**, когда вы вернётесь
+   (один автоповтор; дальше — кнопка «Установить»). Экран открывается по цепочке
+   `ACTION_MANAGE_UNKNOWN_APP_SOURCES(package:)` → без пакета → `ACTION_APPLICATION_DETAILS_SETTINGS`
+   → общие настройки, поэтому работает и на прошивках без пакетного экрана.
+
+Важно: код ошибки нельзя искать в тексте сообщения — в тексте «Разрешите установку приложений
+из этого источника…» строки `INSTALL_PERMISSION_REQUIRED` нет (это была причина бага 1.1.0).
+Проверка — `isInstallPermissionError()` в `src/lib/nativeUpdater.ts`.
 
 Требуемые разрешения и пути:
 
 - `AndroidManifest.xml`: `android.permission.REQUEST_INSTALL_PACKAGES`;
 - `res/xml/file_paths.xml`: `external-files-path name="synth_updates" path="Download/"`
   (иначе `FileProvider` не отдаст установщику скачанный файл).
+
+## Файлы из приложения (SynthFiles)
+
+Локальный плагин `android/app/src/main/java/app/synth/hub/FilesPlugin.java` (тоже
+регистрируется в `MainActivity`) решает проблему WebView: у него нет DownloadListener,
+поэтому `<a download>` в APK не работал — экспорт чата и «Скачать» у картинки ничего не делали.
+
+| Метод | Что делает |
+| --- | --- |
+| `saveText({fileName, text, mime})` | сохраняет текстовый файл (UTF-8) |
+| `saveBase64({fileName, base64, mime})` | сохраняет файл из data URL (картинка) |
+
+Куда попадает файл (ответ `{path, visible}`):
+
+- **Android 10+** — общие папки через `MediaStore`: картинки в `Pictures/SYNTH` (видны в галерее),
+  остальное — в `Download/SYNTH`; разрешения не нужны, `visible = true`;
+- **Android 9−** — песочница приложения (`getExternalFilesDir(DOWNLOADS)`), путь возвращается в JS.
+
+JS-обёртка — `src/lib/files.ts` (`saveTextFile`, `saveImageFile`): в APK вызывается плагин,
+в браузере — обычное скачивание.
+
+## Кнопка «Назад» и камера
+
+- Аппаратная «Назад» обрабатывается стеком `src/lib/backStack.ts`: каждая открытая панель
+  (шторка `Sheet`, диалог обновления, меню чата, настройки, консоль отладки, сайдбар)
+  кладёт туда обработчик, нажатие достаётся верхнему; если закрывать нечего — `App.minimizeApp()`.
+  Так «Назад» не сворачивает приложение поверх открытой шторки.
+- `AndroidManifest.xml` содержит `<queries>` для `IMAGE_CAPTURE`/`VIDEO_CAPTURE`:
+  без них на Android 11+ `resolveActivity()` в `BridgeWebChromeClient` возвращает `null`,
+  и «Прикрепить → Камера» молча открывает файловый менеджер вместо съёмки.
+- Вложения определяются по MIME, а при пустом/неизвестном типе (частый случай у Android-провайдеров) —
+  по расширению (`imageMimeOf()` в `src/lib/attachments.ts`).
+
+Проверенные настройки, которые менять не нужно: `server.cleartext: true` работает — атрибут
+`android:usesCleartextTraffic="true"` приезжает в APK из `android/capacitor-cordova-android-plugins`;
+`android:allowMixedContent` и `CapacitorHttp: { enabled: false }` (стриминг SSE идёт через WebView);
+`INTERNET`; `FileProvider` с путями `Download/`, `cache-path`, `external-path`.
 
 Важно: обновление устанавливается **поверх** приложения только при совпадении подписи.
 Если раньше был установлен debug APK (или APK со старым `applicationId`
@@ -122,12 +166,12 @@ npm run android:assets   # mipmap-*/ic_launcher*, drawable-*/splash.png
 
 ```bash
 # 1. версия веб-бандла (попадает в appInfo → APP_VERSION)
-#    package.json → "version": "1.1.0"
+#    package.json → "version": "1.1.1"
 # 2. версия пакета
-#    android/app/build.gradle → versionCode 2, versionName "1.1.0"
+#    android/app/build.gradle → versionCode 3, versionName "1.1.1"
 npm run android:release
-cp android/app/build/outputs/apk/release/app-release.apk synth-v1.1.0.apk
-# 3. GitHub → Releases → Draft a new release: tag v1.1.0, приложить synth-v1.1.0.apk
+cp android/app/build/outputs/apk/release/app-release.apk synth-v1.1.1.apk
+# 3. GitHub → Releases → Draft a new release: tag v1.1.1, приложить synth-v1.1.1.apk
 ```
 
 После публикации релиза приложения на телефонах увидят обновление при следующем запуске.

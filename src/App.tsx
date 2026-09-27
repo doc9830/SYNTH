@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ImageAttachment } from '@/types'
+import { pushBackHandler, handleBackPress } from '@/lib/backStack'
 import { useActiveConversation, useConversations } from '@/lib/conversations'
-import { minimizeApp, onAndroidBack } from '@/lib/nativeShell'
+import { minimizeApp, onAndroidBack, onAppResume } from '@/lib/nativeShell'
 import { getReadiness } from '@/lib/readiness'
 import { isConfigured, useSettings } from '@/lib/settings'
 import { notify } from '@/lib/toast'
@@ -97,17 +98,40 @@ export default function App() {
     setDebugOpen(true)
   }
 
-  // Аппаратная кнопка «Назад» в APK: сначала закрываем открытые панели,
-  // и только когда закрывать нечего — сворачиваем приложение.
+  // Аппаратная кнопка «Назад» в APK: нажатие получает верхняя открытая панель
+  // (шторка, диалог, меню, сайдбар — см. src/lib/backStack.ts), а когда
+  // закрывать нечего — приложение сворачивается.
   useEffect(() => {
     return onAndroidBack(() => {
-      if (setupOpen) setSetupOpen(false)
-      else if (settingsOpen) setSettingsOpen(false)
-      else if (debugOpen) setDebugOpen(false)
-      else if (sidebarOpen) setSidebarOpen(false)
-      else void minimizeApp()
+      if (!handleBackPress()) void minimizeApp()
     })
-  }, [setupOpen, settingsOpen, debugOpen, sidebarOpen])
+  }, [])
+
+  // Свои панели тоже участвуют в стеке «Назад» (порядок = порядок открытия)
+  useEffect(() => {
+    if (!setupOpen) return undefined
+    return pushBackHandler(() => setSetupOpen(false))
+  }, [setupOpen])
+
+  useEffect(() => {
+    if (!settingsOpen) return undefined
+    return pushBackHandler(() => setSettingsOpen(false))
+  }, [settingsOpen])
+
+  useEffect(() => {
+    if (!debugOpen) return undefined
+    return pushBackHandler(() => setDebugOpen(false))
+  }, [debugOpen])
+
+  useEffect(() => {
+    if (!sidebarOpen) return undefined
+    return pushBackHandler(() => setSidebarOpen(false))
+  }, [sidebarOpen])
+
+  // Вернулись из системных настроек («Установка неизвестных приложений») —
+  // сразу доустанавливаем обновление, чтобы не заставлять жать «Установить».
+  const retryPendingInstall = useUpdateStore((s) => s.retryPendingInstall)
+  useEffect(() => onAppResume(() => void retryPendingInstall()), [retryPendingInstall])
 
   const handleSend = (text: string, attachments: ImageAttachment[]) => {
     if (!readiness.canChat) {

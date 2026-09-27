@@ -3,11 +3,31 @@ import { uid } from './utils'
 
 export const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp']
 
+/** Расширение → MIME: Android-провайдеры часто отдают пустой type или octet-stream. */
+const EXT_TO_MIME: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+}
+
 /** Максимальная длинная сторона при отправке в модель (экономия токенов). */
 const MAX_SIDE = 1400
 
+/**
+ * Тип изображения: сначала `file.type`, при пустом/неизвестном — по расширению.
+ * На Android файл из «Галереи» или камеры может прийти без MIME-типа,
+ * и без этой проверки он бы отбраковывался как «неподдерживаемый».
+ */
+export function imageMimeOf(file: File): string {
+  const type = (file.type || '').toLowerCase()
+  if (ACCEPTED_IMAGE_TYPES.includes(type)) return type
+  const ext = file.name?.split('.').pop()?.toLowerCase() ?? ''
+  return EXT_TO_MIME[ext] ?? type
+}
+
 export function isImageFile(file: File): boolean {
-  return ACCEPTED_IMAGE_TYPES.includes(file.type.toLowerCase())
+  return ACCEPTED_IMAGE_TYPES.includes(imageMimeOf(file))
 }
 
 function readAsDataUrl(file: File | Blob): Promise<string> {
@@ -37,6 +57,7 @@ export async function fileToAttachment(file: File): Promise<ImageAttachment> {
     throw new Error(`Неподдерживаемый формат «${file.type || 'unknown'}». Разрешены jpg, jpeg, png, webp.`)
   }
 
+  const sourceMime = imageMimeOf(file)
   const original = await readAsDataUrl(file)
   const img = await loadImage(original)
   const scale = Math.min(1, MAX_SIDE / Math.max(img.width, img.height))
@@ -45,7 +66,7 @@ export async function fileToAttachment(file: File): Promise<ImageAttachment> {
     return {
       id: uid('att'),
       name: file.name || 'image',
-      mime: file.type,
+      mime: sourceMime,
       dataUrl: original,
       width: img.width,
       height: img.height,
@@ -59,7 +80,7 @@ export async function fileToAttachment(file: File): Promise<ImageAttachment> {
   if (!ctx) throw new Error('Браузер не поддерживает обработку изображений (canvas).')
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
 
-  const mime = file.type === 'image/png' ? 'image/png' : 'image/jpeg'
+  const mime = sourceMime === 'image/png' ? 'image/png' : 'image/jpeg'
   const dataUrl = canvas.toDataURL(mime, 0.9)
 
   return {

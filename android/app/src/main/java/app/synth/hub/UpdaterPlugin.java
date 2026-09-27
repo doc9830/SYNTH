@@ -10,6 +10,7 @@ import android.provider.Settings;
 import androidx.core.content.FileProvider;
 
 import com.getcapacitor.JSObject;
+import com.getcapacitor.Logger;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
@@ -82,16 +83,36 @@ public class UpdaterPlugin extends Plugin {
 
     @PluginMethod
     public void openInstallSettings(PluginCall call) {
-        try {
-            Intent intent = new Intent(
-                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                    Uri.parse("package:" + getContext().getPackageName()));
+        Context ctx = getContext();
+        String pkg = ctx.getPackageName();
+
+        // Экран «Установка неизвестных приложений» для конкретного пакета есть
+        // не на всех прошивках: пробуем по очереди от самого точного к общему.
+        Intent[] candidates = new Intent[] {
+                new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + pkg)),
+                new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES),
+                new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + pkg)),
+                new Intent(Settings.ACTION_SETTINGS),
+        };
+
+        for (Intent intent : candidates) {
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            getContext().startActivity(intent);
-            call.resolve();
-        } catch (Exception e) {
-            call.reject("Не удалось открыть системные настройки: " + e.getMessage(), e);
+            try {
+                ctx.startActivity(intent);
+                JSObject ret = new JSObject();
+                ret.put("opened", true);
+                ret.put("action", intent.getAction());
+                call.resolve(ret);
+                return;
+            } catch (Exception e) {
+                // на этой прошивке такого экрана нет — пробуем следующий вариант
+                Logger.warn("Не удалось открыть " + intent.getAction() + ": " + e.getMessage());
+            }
         }
+
+        call.reject(
+                "Системные настройки недоступны. Включите «Установка неизвестных приложений» для SYNTH вручную.",
+                "SETTINGS_UNAVAILABLE");
     }
 
     @PluginMethod

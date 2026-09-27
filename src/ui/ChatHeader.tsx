@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { useConversations } from '@/lib/conversations'
+import { pushBackHandler } from '@/lib/backStack'
 import { copyText } from '@/lib/clipboard'
-import { conversationToMarkdown, downloadText, safeFileName } from '@/lib/exportChat'
+import { useConversations } from '@/lib/conversations'
+import { conversationToMarkdown, safeFileName } from '@/lib/exportChat'
+import { saveTextFile } from '@/lib/files'
 import { issuesSignature, useNotices } from '@/lib/notices'
 import type { Readiness } from '@/lib/readiness'
 import { useSettings, type Settings } from '@/lib/settings'
@@ -58,7 +60,12 @@ export function ChatHeader({
       if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false)
     }
     document.addEventListener('mousedown', onDocClick)
-    return () => document.removeEventListener('mousedown', onDocClick)
+    // аппаратная «Назад» закрывает выпадающее меню чата
+    const release = pushBackHandler(() => setMenuOpen(false))
+    return () => {
+      document.removeEventListener('mousedown', onDocClick)
+      release()
+    }
   }, [menuOpen])
 
   const errors = readiness.issues.filter((i) => i.severity === 'error')
@@ -162,11 +169,14 @@ export function ChatHeader({
                 icon={<IconDownload size={15} />}
                 label="Экспорт в .md"
                 disabled={!conversation?.messages.length}
-                onClick={() => {
+                onClick={async () => {
                   setMenuOpen(false)
                   if (!conversation) return
-                  downloadText(safeFileName(conversation.title), conversationToMarkdown(conversation))
-                  notify('Файл сохранён', 'success')
+                  const result = await saveTextFile(
+                    safeFileName(conversation.title),
+                    conversationToMarkdown(conversation),
+                  )
+                  notify(result.message, result.ok ? 'success' : 'error')
                 }}
               />
               <MenuItem

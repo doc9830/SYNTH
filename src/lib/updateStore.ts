@@ -8,6 +8,7 @@ import {
   type UpdateInfo,
 } from './appUpdate'
 import {
+  isInstallPermissionError,
   nativeDownloadApk,
   nativeInstallApk,
   nativeOpenInstallSettings,
@@ -35,6 +36,10 @@ interface UpdateState {
   error: string | null
   /** Путь к уже скачанному APK: пригодится, если установку прервал запрос разрешения */
   apkPath: string | null
+  /** true — открыт системный экран «Установка неизвестных приложений» */
+  waitingPermission: boolean
+  /** true — автоповтор установки после возврата из настроек уже был */
+  autoRetried: boolean
 
   check: (opts?: { manual?: boolean; auto?: boolean }) => Promise<void>
   openDialog: () => void
@@ -44,6 +49,8 @@ interface UpdateState {
   downloadAndInstall: () => Promise<void>
   /** Повторный запуск установщика для уже скачанного файла */
   installDownloaded: () => Promise<void>
+  /** Вернулись в приложение из системных настроек — доустановить, если ждали */
+  retryPendingInstall: () => Promise<void>
 }
 
 export const useUpdateStore = create<UpdateState>()((set, get) => ({
@@ -54,6 +61,8 @@ export const useUpdateStore = create<UpdateState>()((set, get) => ({
   progress: 0,
   error: null,
   apkPath: null,
+  waitingPermission: false,
+  autoRetried: false,
 
   check: async (opts) => {
     const manual = Boolean(opts?.manual)
@@ -98,17 +107,38 @@ export const useUpdateStore = create<UpdateState>()((set, get) => ({
     if (!path) return
     try {
       await nativeInstallApk(path)
-      set({ dialogOpen: false, error: null })
+      set({ dialogOpen: false, error: null, waitingPermission: false, autoRetried: false })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      set({ error: message })
-      if (/INSTALL_PERMISSION_REQUIRED|неизвестных источников/i.test(message)) {
-        notify('Разрешите установку приложений для SYNTH — сейчас откроем настройки', 'info')
-        await nativeOpenInstallSettings()
+
+      // Android ещё не разрешил установку из этого источника (error.code =
+      // INSTALL_PERMISSION_REQUIRED): открываем системный экран настроек.
+      if (isInstallPermissionError(err)) {
+        set({ waitingPermission: true, error: null })
+        const opened = await nativeOpenInstallSettings()
+        notify(
+          opened
+            ? 'Включите «Разрешить установку приложений» для SYNTH — установка продолжится автоматически'
+            : 'Откройте вручную: Настройки → Приложения → SYNTH → «Установка неизвестных приложений».',
+          opened ? 'info' : 'error',
+        )
         return
       }
+
+      set({ error: message, waitingPermission: false })
       notify(message, 'error')
     }
+  },
+
+  retryPendingInstall: async () => {
+    const { waitingPermission, autoRetried, apkPath, downloading } = get()
+    if (!waitingPermission) return
+    // один автоповтор: иначе возврат из настроек без включения тумблера
+    // открывал бы их по кругу (кнопка «Установить» в диалоге остаётся)
+    set({ waitingPermission: false })
+    if (autoRetried || !apkPath || downloading) return
+    set({ autoRetried: true })
+    await get().installDownloaded()
   },
 
   downloadAndInstall: async () => {
@@ -128,7 +158,7 @@ export const useUpdateStore = create<UpdateState>()((set, get) => ({
       return
     }
 
-    set({ downloading: true, progress: 0, error: null })
+    set({ downloading: true, progress: 0, error: null, autoRetried: false })
     try {
       const path = await nativeDownloadApk(info.apk.url, info.apk.name, (ratio) =>
         set({ progress: ratio }),

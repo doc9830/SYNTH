@@ -1,5 +1,6 @@
 import { useEffect, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { pushBackHandler } from '@/lib/backStack'
 import { cn } from '@/lib/utils'
 import { IconX } from './icons'
 
@@ -25,7 +26,12 @@ export function Sheet({ open, onClose, title, description, children, footer, cla
       if (e.key === 'Escape') onClose()
     }
     document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
+    // аппаратная «Назад» на Android закрывает шторку, а не приложение
+    const release = pushBackHandler(onClose)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      release()
+    }
   }, [open, onClose])
 
   if (!open) return null

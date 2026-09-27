@@ -71,3 +71,29 @@ export async function minimizeApp(): Promise<void> {
     // no-op
   }
 }
+
+/**
+ * Вызов при возвращении приложения на передний план (после системных настроек,
+ * установщика пакета, камеры). Возвращает функцию отписки.
+ */
+export function onAppResume(handler: () => void): () => void {
+  if (!isNativeApp()) return () => undefined
+  let disposed = false
+  let remove: (() => void) | undefined
+
+  void import('@capacitor/app')
+    .then(({ App: CapacitorApp }) =>
+      CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+        if (isActive) handler()
+      }).then((sub) => {
+        if (disposed) void sub.remove()
+        else remove = () => void sub.remove()
+      }),
+    )
+    .catch(() => undefined)
+
+  return () => {
+    disposed = true
+    remove?.()
+  }
+}

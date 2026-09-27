@@ -40,4 +40,16 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Установка APK-обновлений из самого приложения (SYNTH Updater) -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <!-- Android 11+ (API 30): без этих записей resolveActivity() для камеры
+         возвращает null и «Прикрепить → Камера» молча открывает файловый
+         менеджер вместо съёмки (см. BridgeWebChromeClient в Capacitor). -->
+    <queries>
+        <intent>
+            <action android:name="android.media.action.IMAGE_CAPTURE" />
+        </intent>
+        <intent>
+            <action android:name="android.media.action.VIDEO_CAPTURE" />
+        </intent>
+    </queries>
 </manifest>

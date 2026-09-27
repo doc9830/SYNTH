@@ -23,7 +23,7 @@ export interface DownloadProgress {
 interface SynthUpdaterPlugin {
   appInfo(): Promise<NativeAppInfo>
   canInstall(): Promise<{ allowed: boolean }>
-  openInstallSettings(): Promise<void>
+  openInstallSettings(): Promise<{ opened: boolean; action?: string }>
   download(options: { url: string; fileName?: string }): Promise<{ path: string; size: number }>
   cancelDownload(): Promise<void>
   install(options: { path: string }): Promise<{ started: boolean }>
@@ -66,13 +66,18 @@ export async function nativeCanInstall(): Promise<boolean> {
   }
 }
 
-/** Системный экран «Установка неизвестных приложений» для SYNTH. */
-export async function nativeOpenInstallSettings(): Promise<void> {
-  if (!nativeUpdaterAvailable()) return
+/**
+ * Системный экран «Установка неизвестных приложений» для SYNTH.
+ * true — экран настроек действительно открылся.
+ */
+export async function nativeOpenInstallSettings(): Promise<boolean> {
+  if (!nativeUpdaterAvailable()) return false
   try {
-    await updater().openInstallSettings()
+    const res = await updater().openInstallSettings()
+    return Boolean(res?.opened)
   } catch {
-    // намеренно тихо: пользователь просто продолжит вручную
+    // на этой прошивке нужного экрана нет — сообщим пользователю выше
+    return false
   }
 }
 
@@ -113,4 +118,22 @@ export async function nativeCancelDownload(): Promise<void> {
 /** Запускает системный установщик для скачанного APK. */
 export async function nativeInstallApk(path: string): Promise<void> {
   await updater().install({ path })
+}
+
+/**
+ * Ошибка «Android не разрешил установку APK из этого приложения».
+ *
+ * Важно: `INSTALL_PERMISSION_REQUIRED` — это `error.code` от нативного плагина,
+ * а не часть текста сообщения (в тексте «Разрешите установку приложений из
+ * этого источника…»). Поэтому проверяем и код, и текст.
+ */
+export function isInstallPermissionError(err: unknown): boolean {
+  if (err && typeof err === 'object') {
+    const code = (err as { code?: unknown }).code
+    if (typeof code === 'string' && code.toUpperCase() === 'INSTALL_PERMISSION_REQUIRED') return true
+  }
+  const message = err instanceof Error ? err.message : String(err ?? '')
+  return /INSTALL_PERMISSION_REQUIRED|установку приложений из этого источника|неизвестных источников/i.test(
+    message,
+  )
 }

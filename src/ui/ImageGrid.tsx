@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { copyImage, downloadDataUrl } from '@/lib/clipboard'
+import { copyImage } from '@/lib/clipboard'
+import { saveImageFile } from '@/lib/files'
 import { notify } from '@/lib/toast'
 import { IconCheck, IconDownload, IconImage } from './icons'
 
@@ -50,7 +51,11 @@ export function ImageGrid({ images, alt = 'Сгенерированное изо
             </button>
             <button
               type="button"
-              onClick={() => downloadDataUrl(src, `image-${Date.now()}-${i + 1}.${extOf(src)}`)}
+              onClick={() => {
+                void saveImageFile(src, `image-${Date.now()}-${i + 1}.${extOf(src)}`).then((result) =>
+                  notify(result.message, result.ok ? 'success' : 'error'),
+                )
+              }}
               className="flex items-center gap-1 rounded-lg bg-neutral-900/80 px-2 py-1 text-xs text-white backdrop-blur transition hover:bg-neutral-900"
             >
               <IconDownload size={13} />

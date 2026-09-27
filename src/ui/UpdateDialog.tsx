@@ -1,4 +1,6 @@
+import { useEffect } from 'react'
 import { APP_VERSION, RELEASES_URL } from '@/lib/appInfo'
+import { pushBackHandler } from '@/lib/backStack'
 import { nativeUpdaterAvailable } from '@/lib/nativeUpdater'
 import { useUpdateStore } from '@/lib/updateStore'
 import { cn } from '@/lib/utils'
@@ -36,6 +38,12 @@ export function UpdateDialog() {
   const error = useUpdateStore((s) => s.error)
   const apkPath = useUpdateStore((s) => s.apkPath)
   const downloadAndInstall = useUpdateStore((s) => s.downloadAndInstall)
+
+  // аппаратная «Назад» закрывает диалог обновления (но не во время загрузки)
+  useEffect(() => {
+    if (!open || downloading) return undefined
+    return pushBackHandler(close)
+  }, [open, downloading, close])
 
   if (!open || !info) return null
 

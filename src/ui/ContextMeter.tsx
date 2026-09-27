@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChatMessage } from '@/types'
 import {
   CONTEXT_PRESETS,
@@ -8,6 +8,7 @@ import {
   type ContextUsage,
 } from '@/lib/context'
 import { sanitizeContextWindow, useSettings } from '@/lib/settings'
+import { selectStreamPatch, useStreamDraft } from '@/lib/streamDraft'
 import { cn } from '@/lib/utils'
 import { btnCls, inputCls } from './controls'
 import { Sheet } from './Sheet'
@@ -32,15 +33,33 @@ export function ContextMeter({ messages }: ContextMeterProps) {
   const settings = useSettings((s) => s.settings)
   const update = useSettings((s) => s.update)
   const [open, setOpen] = useState(false)
-  const [usage, setUsage] = useState<ContextUsage>(() => measureContext(settings, messages))
   const [draft, setDraft] = useState('')
   const measuredAt = useRef(0)
+
+  /**
+   * Пока ответ печатается, его текст живёт не в списке сообщений, а в
+   * `streamDraft` (см. задачу 01: кадр стрима не трогает стор чатов).
+   * Подписка — только здесь: метр должен расти вживую, но шапка и список
+   * сообщений при этом не перерисовываются.
+   */
+  const live = messages[messages.length - 1]
+  const liveId = live?.status === 'streaming' ? live.id : ''
+  const streamPatch = useStreamDraft(selectStreamPatch(liveId))
+  const measured = useMemo(
+    () =>
+      streamPatch && live
+        ? messages.map((m) => (m.id === live.id ? { ...m, ...streamPatch } : m))
+        : messages,
+    [messages, streamPatch, live],
+  )
+
+  const [usage, setUsage] = useState<ContextUsage>(() => measureContext(settings, measured))
 
   useEffect(() => {
     const delay = MEASURE_THROTTLE_MS - (Date.now() - measuredAt.current)
     const measure = () => {
       measuredAt.current = Date.now()
-      setUsage(measureContext(settings, messages))
+      setUsage(measureContext(settings, measured))
     }
     if (delay <= 0) {
       measure()
@@ -48,7 +67,7 @@ export function ContextMeter({ messages }: ContextMeterProps) {
     }
     const timer = window.setTimeout(measure, delay)
     return () => window.clearTimeout(timer)
-  }, [settings, messages])
+  }, [settings, measured])
 
   // при открытии шторки подставляем текущее окно в поле «своё значение»
   useEffect(() => {

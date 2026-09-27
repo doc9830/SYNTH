@@ -10,6 +10,8 @@
  * Запуск: npm run checks
  */
 import { useConversations } from '@/lib/conversations'
+import { measureContext } from '@/lib/context'
+import { DEFAULT_SETTINGS, type Settings } from '@/lib/settings'
 import {
   clearStreamDraft,
   publishStreamDraft,
@@ -175,5 +177,36 @@ check(
   `метрика «до»: ${FRAMES} кадров → ${legacy.notifications} уведомлений стора (реплика прежнего пути)`,
   legacy.notifications === FRAMES && legacy.identityChanges === FRAMES,
 )
+
+/* ─── 6. метр контекста в шапке растёт вживую (подписка на кадр) ─── */
+
+const settings: Settings = structuredClone(DEFAULT_SETTINGS)
+const liveId = 'live-1'
+const base: ChatMessage[] = [
+  message('u1', 'user', 'вопрос '.repeat(50)),
+  { id: liveId, role: 'assistant', createdAt: 3, content: '', status: 'streaming' },
+]
+const streamedText = 'ответ '.repeat(300)
+
+publishStreamDraft('conv-live', liveId, { content: streamedText, status: 'streaming' })
+const livePatch = selectStreamPatch(liveId)(useStreamDraft.getState())
+const liveEmpty = measureContext(settings, base).used
+const liveMerged = measureContext(
+  settings,
+  base.map((m) => (m.id === liveId ? { ...m, ...livePatch! } : m)),
+).used
+const liveDirect = measureContext(
+  settings,
+  base.map((m) => (m.id === liveId ? { ...m, content: streamedText } : m)),
+).used
+
+check('метр контекста видит кадр стрима (число растёт на ходу)', liveMerged > liveEmpty)
+check('замер по кадру совпадает с замером по тексту в сторе', liveMerged === liveDirect)
+check(
+  'вне стрима подписка на кадр ничего не добавляет',
+  selectStreamPatch('чужое-сообщение')(useStreamDraft.getState()) === null &&
+    measureContext(settings, base).used === liveEmpty,
+)
+clearStreamDraft(liveId)
 
 finish()

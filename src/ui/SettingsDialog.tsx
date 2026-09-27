@@ -14,19 +14,14 @@ import { KEYLESS_ENGINE_LABELS } from '@/providers/search'
 import type { KeylessEngine } from '@/types'
 import { IconAlert, IconBug, IconCheck, IconDownload, IconRefresh, IconTrash, IconX } from './icons'
 import { ModelSelect } from './ModelSelect'
-
-const inputCls =
-  'w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100'
-
-const btnCls =
-  'inline-flex items-center gap-1.5 rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800'
+import { btnCls, inputCls } from './controls'
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-300">{label}</span>
+      <span className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-300">{label}</span>
       {children}
-      {hint && <span className="mt-1 block text-[11px] text-slate-500 dark:text-slate-400">{hint}</span>}
+      {hint && <span className="mt-1 block text-[11px] text-neutral-500 dark:text-neutral-400">{hint}</span>}
     </label>
   )
 }
@@ -49,13 +44,13 @@ function Toggle({
       className="flex w-full items-center justify-between gap-3 rounded-xl px-1 py-1.5 text-left"
     >
       <span>
-        <span className="block text-sm text-slate-800 dark:text-slate-100">{label}</span>
-        {hint && <span className="block text-[11px] text-slate-500 dark:text-slate-400">{hint}</span>}
+        <span className="block text-sm text-neutral-800 dark:text-neutral-100">{label}</span>
+        {hint && <span className="block text-[11px] text-neutral-500 dark:text-neutral-400">{hint}</span>}
       </span>
       <span
         className={cn(
           'relative h-5 w-9 shrink-0 rounded-full transition',
-          checked ? 'bg-blue-600' : 'bg-slate-300 dark:bg-slate-700',
+          checked ? 'bg-neutral-900 dark:bg-neutral-200' : 'bg-neutral-300 dark:bg-neutral-700',
         )}
       >
         <span
@@ -79,7 +74,7 @@ function Segmented<T extends string>({
   onChange: (v: T) => void
 }) {
   return (
-    <div className="flex gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
+    <div className="flex gap-1 rounded-xl bg-neutral-100 p-1 dark:bg-neutral-800">
       {options.map((o) => (
         <button
           key={o.value}
@@ -88,8 +83,8 @@ function Segmented<T extends string>({
           className={cn(
             'flex-1 rounded-lg px-2 py-1.5 text-xs transition',
             value === o.value
-              ? 'bg-white font-medium text-slate-900 shadow-sm dark:bg-slate-900 dark:text-white'
-              : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white',
+              ? 'bg-white font-medium text-neutral-900 shadow-sm dark:bg-neutral-700 dark:text-white'
+              : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-white',
           )}
         >
           {o.label}
@@ -100,9 +95,8 @@ function Segmented<T extends string>({
 }
 
 const TABS = [
-  { id: 'api', label: 'API' },
-  { id: 'search', label: 'Web Search' },
-  { id: 'image', label: 'Изображения' },
+  { id: 'api', label: 'Подключение' },
+  { id: 'search', label: 'Поиск' },
   { id: 'ui', label: 'Интерфейс' },
   { id: 'data', label: 'Данные' },
 ] as const
@@ -232,7 +226,7 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 backdrop-blur-sm sm:items-center sm:p-4"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-neutral-900/50 backdrop-blur-sm sm:items-center sm:p-4"
       onClick={onClose}
       role="presentation"
     >
@@ -241,21 +235,21 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
         aria-modal="true"
         aria-label="Настройки"
         onClick={(e) => e.stopPropagation()}
-        className="flex h-[100dvh] w-full flex-col overflow-hidden rounded-none border-slate-200 bg-white shadow-2xl sm:h-[86vh] sm:max-w-2xl sm:rounded-2xl sm:border dark:border-slate-700 dark:bg-slate-900"
+        className="flex h-[100dvh] w-full flex-col overflow-hidden rounded-none border-neutral-200 bg-white shadow-2xl sm:h-[86vh] sm:max-w-2xl sm:rounded-2xl sm:border dark:border-neutral-700 dark:bg-neutral-900"
       >
-        <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] dark:border-slate-800">
-          <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">Настройки</h3>
+        <div className="flex items-center justify-between gap-2 border-b border-neutral-200 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] dark:border-neutral-800">
+          <h3 className="text-base font-semibold text-neutral-800 dark:text-neutral-100">Настройки</h3>
           <button
             type="button"
             onClick={onClose}
-            className="-mr-1 rounded-xl p-2 text-slate-500 transition hover:bg-slate-100 active:bg-slate-200 dark:text-slate-300 dark:hover:bg-slate-800"
+            className="-mr-1 rounded-xl p-2 text-neutral-500 transition hover:bg-neutral-100 active:bg-neutral-200 dark:text-neutral-300 dark:hover:bg-neutral-800"
             aria-label="Закрыть настройки"
           >
             <IconX size={18} />
           </button>
         </div>
 
-        <div className="flex gap-1 overflow-x-auto border-b border-slate-200 px-2 py-2 dark:border-slate-800">
+        <div className="flex gap-1 overflow-x-auto border-b border-neutral-200 px-2 py-2 dark:border-neutral-800">
           {TABS.map((t) => (
             <button
               key={t.id}
@@ -264,8 +258,8 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
               className={cn(
                 'min-h-9 shrink-0 rounded-xl px-3.5 py-2 text-sm transition active:opacity-80',
                 tab === t.id
-                  ? 'bg-blue-600 font-medium text-white'
-                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800',
+                  ? 'bg-neutral-900 font-medium text-white dark:bg-neutral-200 dark:text-neutral-900'
+                  : 'text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800',
               )}
             >
               {t.label}
@@ -274,7 +268,7 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
         </div>
 
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-          {readiness.issues.length > 0 && (
+          {tab === 'api' && readiness.issues.length > 0 && (
             <ul className="space-y-2">
               {readiness.issues.map((issue) => (
                 <li
@@ -389,6 +383,79 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
                 <ModelSelect kind="chat" value={settings.model} onChange={(model) => update({ model })} />
               </Field>
 
+              <div className="space-y-4 rounded-2xl border border-neutral-200 p-3 dark:border-neutral-800">
+                <div>
+                  <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                    Генерация изображений
+                  </p>
+                  <p className="mt-0.5 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-400">
+                    Модель получает инструмент generate_image и может нарисовать картинку прямо в чате.
+                  </p>
+                </div>
+
+                <Toggle
+                  label="Включить генерацию"
+                  checked={settings.image.enabled}
+                  onChange={(enabled) => updateSection('image', { enabled })}
+                />
+
+                {settings.image.enabled && (
+                  <>
+                    <Field
+                      label="Модель изображений"
+                      hint="Список тот же, что и для чата — из GET /v1/models подключения. Если нужной модели нет, введите её id вручную в селекторе."
+                    >
+                      <ModelSelect
+                        kind="image"
+                        value={settings.image.model}
+                        onChange={(model) => updateSection('image', { model })}
+                      />
+                    </Field>
+
+                    <Field
+                      label="Способ генерации"
+                      hint="Images API — POST /v1/images/generations (gpt-image-1, dall-e-3, flux). Chat-based — модель рисует прямо в диалоге через /v1/chat/completions (Gemini Image, nano-banana)."
+                    >
+                      <select
+                        value={settings.image.provider}
+                        onChange={(e) =>
+                          updateSection('image', {
+                            provider: e.target.value as typeof settings.image.provider,
+                          })
+                        }
+                        className={inputCls}
+                      >
+                        <option value="images-api">Images API (/v1/images/generations)</option>
+                        <option value="chat-image">Chat-based (модель рисует в диалоге)</option>
+                      </select>
+                    </Field>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <Field label="Размер">
+                        <input
+                          value={settings.image.size}
+                          onChange={(e) => updateSection('image', { size: e.target.value })}
+                          placeholder="1024x1024"
+                          className={inputCls}
+                          spellCheck={false}
+                        />
+                      </Field>
+                      <Field label="Качество">
+                        <Segmented
+                          value={settings.image.quality}
+                          onChange={(quality) => updateSection('image', { quality })}
+                          options={[
+                            { value: 'low', label: 'low' },
+                            { value: 'medium', label: 'medium' },
+                            { value: 'high', label: 'high' },
+                          ]}
+                        />
+                      </Field>
+                    </div>
+                  </>
+                )}
+              </div>
+
               <Field label="System prompt" hint="Добавляется в начало каждого диалога. Можно оставить пустым.">
                 <textarea
                   value={settings.systemPrompt}
@@ -407,7 +474,7 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
                   step={0.05}
                   value={settings.temperature}
                   onChange={(e) => update({ temperature: Number(e.target.value) })}
-                  className="w-full accent-blue-600"
+                  className="w-full accent-neutral-900 dark:accent-neutral-300"
                 />
               </Field>
 
@@ -474,12 +541,12 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
                       ))}
                     </select>
                   </Field>
-                  <p className="rounded-xl bg-slate-100 px-3 py-2 text-[11px] leading-relaxed text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
+                  <p className="rounded-xl bg-neutral-100 px-3 py-2 text-[11px] leading-relaxed text-neutral-600 dark:bg-neutral-800/60 dark:text-neutral-300">
                     API key не нужен. Bing и DuckDuckGo не отдают CORS-заголовки браузеру, поэтому
                     поиск выполняет ваш backend (
-                    <code className="rounded bg-white px-1 dark:bg-slate-900">/api/search</code>) —
+                    <code className="rounded bg-white px-1 dark:bg-neutral-900">/api/search</code>) —
                     держите запущенным{' '}
-                    <code className="rounded bg-white px-1 dark:bg-slate-900">npm run dev:api</code>.
+                    <code className="rounded bg-white px-1 dark:bg-neutral-900">npm run dev:api</code>.
                   </p>
                 </>
               )}
@@ -541,7 +608,7 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
                   step={1}
                   value={settings.search.maxResults}
                   onChange={(e) => updateSection('search', { maxResults: Number(e.target.value) })}
-                  className="w-full accent-blue-600"
+                  className="w-full accent-neutral-900 dark:accent-neutral-300"
                 />
               </Field>
 
@@ -551,11 +618,11 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
                   Проверить поиск
                 </button>
                 {searchTest && (
-                  <span className="text-[11px] text-slate-600 dark:text-slate-300">{searchTest}</span>
+                  <span className="text-[11px] text-neutral-600 dark:text-neutral-300">{searchTest}</span>
                 )}
               </div>
 
-              <hr className="my-1 border-slate-200 dark:border-slate-800" />
+              <hr className="my-1 border-neutral-200 dark:border-neutral-800" />
 
               <Toggle
                 label="Читать присланные ссылки (read_url)"
@@ -584,76 +651,18 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
                       Открыть страницу
                     </button>
                     {pageTest && (
-                      <span className="text-[11px] text-slate-600 dark:text-slate-300">{pageTest}</span>
+                      <span className="text-[11px] text-neutral-600 dark:text-neutral-300">{pageTest}</span>
                     )}
                   </div>
                   {pageShot && (
                     <img
                       src={pageShot}
                       alt="Скриншот прочитанной страницы"
-                      className="max-h-64 w-auto rounded-xl border border-slate-200 dark:border-slate-700"
+                      className="max-h-64 w-auto rounded-xl border border-neutral-200 dark:border-neutral-700"
                     />
                   )}
                 </>
               )}
-            </>
-          )}
-
-          {tab === 'image' && (
-            <>
-              <Toggle
-                label="Генерация изображений включена"
-                hint="Модель получает инструмент generate_image и может рисовать по запросу."
-                checked={settings.image.enabled}
-                onChange={(enabled) => updateSection('image', { enabled })}
-              />
-              <Field
-                label="Способ генерации"
-                hint="Images API — POST /v1/images/generations (gpt-image-1, dall-e-3, flux). Chat-based — модель рисует прямо в диалоге через /v1/chat/completions (Gemini Image, nano-banana)."
-              >
-                <select
-                  value={settings.image.provider}
-                  onChange={(e) =>
-                    updateSection('image', {
-                      provider: e.target.value as typeof settings.image.provider,
-                    })
-                  }
-                  className={inputCls}
-                >
-                  <option value="images-api">Images API (/v1/images/generations)</option>
-                  <option value="chat-image">Chat-based (модель рисует в диалоге)</option>
-                </select>
-              </Field>
-              <Field
-                label="Модель генерации"
-                hint="Список берётся из того же /v1/models: по умолчанию показаны только «рисующие» модели, остальные можно включить галочкой."
-              >
-                <ModelSelect
-                  kind="image"
-                  value={settings.image.model}
-                  onChange={(model) => updateSection('image', { model })}
-                />
-              </Field>
-              <Field label="Размер">
-                <input
-                  value={settings.image.size}
-                  onChange={(e) => updateSection('image', { size: e.target.value })}
-                  placeholder="1024x1024"
-                  className={inputCls}
-                  spellCheck={false}
-                />
-              </Field>
-              <Field label="Качество">
-                <Segmented
-                  value={settings.image.quality}
-                  onChange={(quality) => updateSection('image', { quality })}
-                  options={[
-                    { value: 'low', label: 'low' },
-                    { value: 'medium', label: 'medium' },
-                    { value: 'high', label: 'high' },
-                  ]}
-                />
-              </Field>
             </>
           )}
 
@@ -681,7 +690,7 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
                   ]}
                 />
               </Field>
-              <div className="space-y-1 rounded-xl border border-slate-200 px-3 py-2 dark:border-slate-800">
+              <div className="space-y-1 rounded-xl border border-neutral-200 px-3 py-2 dark:border-neutral-800">
                 <Toggle
                   label="Показывать reasoning"
                   hint="Блок «Размышления» над ответом, если модель его вернула."
@@ -706,14 +715,14 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
 
           {tab === 'data' && (
             <>
-              <div className="rounded-xl border border-slate-200 px-3 py-3 dark:border-slate-800">
-                <p className="text-sm text-slate-800 dark:text-slate-100">Локальное хранилище</p>
-                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              <div className="rounded-xl border border-neutral-200 px-3 py-3 dark:border-neutral-800">
+                <p className="text-sm text-neutral-800 dark:text-neutral-100">Локальное хранилище</p>
+                <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
                   {storage
                     ? `Занято ${(storage.usage / 1024 / 1024).toFixed(1)} МБ из ${(storage.quota / 1024 / 1024).toFixed(0)} МБ.`
                     : 'Оценка недоступна в этом браузере.'}
                 </p>
-                <p className="mt-1 text-[11px] text-slate-400">
+                <p className="mt-1 text-[11px] text-neutral-400">
                   История и сгенерированные изображения лежат в IndexedDB этого устройства и никуда не отправляются.
                 </p>
               </div>
@@ -749,11 +758,11 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
                 Сбросить настройки
               </button>
 
-              <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
-                <div className="text-sm font-medium text-slate-800 dark:text-slate-100">
+              <div className="rounded-xl border border-neutral-200 p-3 dark:border-neutral-700">
+                <div className="text-sm font-medium text-neutral-800 dark:text-neutral-100">
                   О программе
                 </div>
-                <div className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                <div className="mt-0.5 text-[11px] text-neutral-500 dark:text-neutral-400">
                   {APP_NAME} v{APP_VERSION} · {APP_TAGLINE}
                 </div>
                 <div className="mt-2 flex flex-wrap gap-2">

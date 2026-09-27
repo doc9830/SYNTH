@@ -73,11 +73,30 @@ export async function chatCompletion(
   return parseChatResponse(json)
 }
 
-/** GET /v1/models — список доступных моделей (чтобы модель не была хардкодом). */
-export async function fetchModelIds(
+/** Модель подключения: id + цена, если провайдер её отдаёт (например, OpenRouter). */
+export interface ModelInfo {
+  id: string
+  pricing?: ModelPricing
+}
+
+/** Цена за 1М токенов в долларах (только то, что реально пришло от провайдера). */
+export interface ModelPricing {
+  prompt?: number
+  completion?: number
+}
+
+/** Провайдеры отдают цену за токен строкой («0.000003») — переводим в $ за 1М. */
+function toPerMillion(value: unknown): number | undefined {
+  const num = typeof value === 'string' ? Number(value) : typeof value === 'number' ? value : Number.NaN
+  if (!Number.isFinite(num) || num <= 0) return undefined
+  return num * 1_000_000
+}
+
+/** GET /v1/models — модели подключения (id + необязательная цена). */
+export async function fetchModels(
   transport: OpenAiTransport,
   signal?: AbortSignal,
-): Promise<string[]> {
+): Promise<ModelInfo[]> {
   let res: Response
   try {
     res = await fetch(transport.modelsUrl, {
@@ -90,9 +109,30 @@ export async function fetchModelIds(
   }
 
   await ensureOk(res, transport.modelsUrl)
-  const json = (await res.json()) as { data?: Array<{ id?: string }> }
-  const ids = (json.data ?? [])
-    .map((m) => m.id)
-    .filter((id): id is string => typeof id === 'string' && id.length > 0)
-  return [...new Set(ids)].sort((a, b) => a.localeCompare(b))
+  const json = (await res.json()) as {
+    data?: Array<{ id?: string; pricing?: Record<string, unknown> }>
+  }
+  const seen = new Set<string>()
+  const models: ModelInfo[] = []
+  for (const raw of json.data ?? []) {
+    const id = typeof raw?.id === 'string' ? raw.id : ''
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    const prompt = toPerMillion(raw.pricing?.prompt)
+    const completion = toPerMillion(raw.pricing?.completion)
+    models.push(
+      prompt === undefined && completion === undefined
+        ? { id }
+        : { id, pricing: { prompt, completion } },
+    )
+  }
+  return models.sort((a, b) => a.id.localeCompare(b.id))
+}
+
+/** GET /v1/models — только идентификаторы (списки, диагностика). */
+export async function fetchModelIds(
+  transport: OpenAiTransport,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  return (await fetchModels(transport, signal)).map((m) => m.id)
 }

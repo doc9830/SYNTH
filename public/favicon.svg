@@ -1,16 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" role="img" aria-label="SYNTH — Synthetic Neural & Tool Hub">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#7c3aed"/>
-      <stop offset="1" stop-color="#0b0d12"/>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a3e44"/>
+      <stop offset="1" stop-color="#16181b"/>
     </linearGradient>
   </defs>
-  <rect width="100" height="100" fill="url(#bg)"/>
-  <line x1="50.00" y1="50.00" x2="50.00" y2="23.80" stroke="#ffffff" stroke-width="4.20" stroke-linecap="round"/>
-  <line x1="50.00" y1="50.00" x2="72.69" y2="63.10" stroke="#ffffff" stroke-width="4.20" stroke-linecap="round"/>
-  <line x1="50.00" y1="50.00" x2="27.31" y2="63.10" stroke="#ffffff" stroke-width="4.20" stroke-linecap="round"/>
-  <circle cx="50.00" cy="50.00" r="9.50" fill="#22d3ee"/>
-  <circle cx="50.00" cy="23.80" r="7.20" fill="#ffffff"/>
-  <circle cx="72.69" cy="63.10" r="7.20" fill="#ffffff"/>
-  <circle cx="27.31" cy="63.10" r="7.20" fill="#ffffff"/>
+  <rect width="100" height="100" rx="22" fill="url(#bg)"/>
+  <path d="M66.4 37.1 L67.3 34.5 L67.5 31.8 L66.9 29.1 L65.7 26.6 L63.9 24.3 L61.5 22.3 L58.6 20.8 L55.4 19.7 L52.0 19.1 L48.5 19.1 L45.0 19.6 L41.8 20.6 L38.9 22.1 L36.4 24.0 L34.5 26.3 L33.2 28.8 L32.6 31.4 L32.6 34.1 L33.4 36.8 L34.8 39.3 L66.0 62.0 L67.1 64.7 L67.5 67.5 L67.1 70.3 L66.0 73.0 L64.2 75.4 L61.7 77.5 L58.8 79.2 L55.4 80.3 L51.8 80.9 L48.2 80.9 L44.6 80.3 L41.3 79.2 L38.3 77.5 L35.8 75.4 L34.0 73.0 L32.9 70.3 L32.5 67.5 L32.9 64.7 L34.0 62.0 L34.8 60.8" fill="none" stroke="#f4f5f7" stroke-width="7.6" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

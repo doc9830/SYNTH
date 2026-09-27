@@ -30,8 +30,8 @@ const DENSITIES = [
 
 /** Знак: масштаб в обычной иконке, в adaptive-слое и на сплэше. */
 const LAUNCHER_SCALE = 1.15
-const FOREGROUND_SCALE = 1.25
-const SPLASH_SCALE = 1.25
+const FOREGROUND_SCALE = 0.85
+const SPLASH_SCALE = 0.6
 
 function write(path, data) {
   mkdirSync(dirname(path), { recursive: true })

@@ -74,7 +74,7 @@ function checkSearch(settings: Settings): ReadinessIssue[] {
           scope: 'search',
           severity: 'warning',
           message: 'SearXNG выбран провайдером поиска, но не задан адрес инстанса.',
-          fix: 'Settings → Web Search → Base URL (например, http://localhost:8080).',
+          fix: 'Настройки → Поиск → Base URL (например, http://localhost:8080).',
         },
       ]
     }
@@ -87,7 +87,7 @@ function checkSearch(settings: Settings): ReadinessIssue[] {
         scope: 'search',
         severity: 'warning',
         message: `Провайдер поиска «${provider.label}» не настроен: нет API key.`,
-        fix: 'Settings → Web Search → API key. Либо выберите «Бесплатный поиск (без API-ключа)».',
+        fix: 'Настройки → Поиск → API key. Либо выберите «Бесплатный поиск (без API-ключа)».',
       },
     ]
   }
@@ -102,7 +102,7 @@ function checkSearch(settings: Settings): ReadinessIssue[] {
           scope: 'search',
           severity: 'warning',
           message: 'Скриншоты страниц делает только backend: в приложении доступны текст, структура и метаданные страницы.',
-          fix: 'Если нужны скриншоты, укажите адрес backend в Settings → Web Search → Backend URL.',
+          fix: 'Если нужны скриншоты, укажите адрес backend в Настройки → Поиск → Backend URL.',
         },
       ]
     }
@@ -120,7 +120,7 @@ function checkSearch(settings: Settings): ReadinessIssue[] {
         message: s.backendUrl.trim()
           ? `Поиск и чтение страниц выполняет backend: ${s.backendUrl.trim()}${endpoints ? ` (${endpoints})` : ''}.`
           : `Работа с вебом выполняется локальным backend (${endpoints}): браузерные запросы к этим сервисам блокируются (CORS).`,
-        fix: 'Держите запущенным npm run dev:api. Если фронтенд открыт не с backend-хоста — укажите Settings → Web Search → Backend URL.',
+        fix: 'Держите запущенным npm run dev:api. Если фронтенд открыт не с backend-хоста — укажите Настройки → Поиск → Backend URL.',
       },
     ]
   }
@@ -136,7 +136,7 @@ function checkImage(settings: Settings): ReadinessIssue[] {
         scope: 'image',
         severity: 'warning',
         message: 'Генерация изображений включена, но модель не выбрана.',
-        fix: 'Выберите модель в настройках → «Изображения» (например, gpt-image-1 или gemini-2.5-flash-image) либо отключите генерацию картинок.',
+        fix: 'Выберите модель в настройках → «Подключение» (например, gpt-image-1 или gemini-2.5-flash-image) либо отключите генерацию картинок.',
       },
     ]
   }

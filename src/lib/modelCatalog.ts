@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import { listModels } from '@/api'
+import { listModelInfos } from '@/api'
+import type { ModelInfo, ModelPricing } from '@/providers/openai/client'
 import { getSettings, useSettings } from './settings'
 
 /**
@@ -27,13 +28,56 @@ export function looksLikeImageModel(id: string): boolean {
 export interface ModelBucket {
   /** Свежий список из API (пусто → показываем кэш из настроек) */
   ids: string[]
+  /** Цены по id модели — только если провайдер их отдаёт (в память, без кэша) */
+  pricing: Record<string, ModelPricing>
   loading: boolean
   error: string | null
   /** Когда список успешно обновился (мс), null — ещё не тянули в этой сессии */
   loadedAt: number | null
 }
 
-const emptyBucket = (): ModelBucket => ({ ids: [], loading: false, error: null, loadedAt: null })
+const emptyBucket = (): ModelBucket => ({
+  ids: [],
+  pricing: {},
+  loading: false,
+  error: null,
+  loadedAt: null,
+})
+
+/** Карта цен по id модели (пропускаем модели без pricing). */
+function toPricing(infos: ModelInfo[]): Record<string, ModelPricing> {
+  const map: Record<string, ModelPricing> = {}
+  for (const model of infos) if (model.pricing) map[model.id] = model.pricing
+  return map
+}
+
+/** Цена в долларах за 1М токенов — компактно, без лишних нулей. */
+export function moneyPerMillion(v: number): string {
+  if (v >= 100) return `$${Math.round(v)}`
+  if (v >= 1) return `$${Number.isInteger(v) ? v : v.toFixed(2)}`
+  if (v >= 0.01) return `$${v.toFixed(2)}`
+  return `$${v.toFixed(3)}`
+}
+
+/** Подпись цены: «вход $0.15 · выход $0.60 / 1М токенов». */
+export function formatModelPrice(pricing: ModelPricing): string {
+  const { prompt, completion } = pricing
+  if (prompt !== undefined && completion !== undefined) {
+    return `вход ${moneyPerMillion(prompt)} · выход ${moneyPerMillion(completion)} / 1М токенов`
+  }
+  if (prompt !== undefined) return `вход ${moneyPerMillion(prompt)} / 1М токенов`
+  return `выход ${moneyPerMillion(completion ?? 0)} / 1М токенов`
+}
+
+/** Та же цена для узких мест интерфейса (чип в шапке): «$0.15 / $0.60 за 1М». */
+export function formatModelPriceShort(pricing: ModelPricing): string {
+  const { prompt, completion } = pricing
+  if (prompt !== undefined && completion !== undefined) {
+    return `${moneyPerMillion(prompt)} / ${moneyPerMillion(completion)} за 1М`
+  }
+  if (prompt !== undefined) return `${moneyPerMillion(prompt)} за 1М`
+  return `${moneyPerMillion(completion ?? 0)} за 1М`
+}
 
 /** Список моделей считаем свежим 10 минут — чаще провайдера дёргать незачем. */
 const TTL = 10 * 60 * 1000
@@ -80,10 +124,17 @@ async function runRefresh(kind: ModelKind, force: boolean): Promise<string[]> {
 
   const task = (async (): Promise<string[]> => {
     try {
-      const ids = await listModels(getSettings())
+      const infos = await listModelInfos(getSettings())
+      const ids = infos.map((m) => m.id)
       commit(kind, ids)
       useModelCatalog.setState({
-        [kind]: { ids, loading: false, error: null, loadedAt: Date.now() },
+        [kind]: {
+          ids,
+          pricing: toPricing(infos),
+          loading: false,
+          error: null,
+          loadedAt: Date.now(),
+        },
       } as Partial<CatalogState>)
       return ids
     } catch (err) {

@@ -89,9 +89,9 @@ export function MessageList({
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-6 overflow-y-auto px-4 py-10">
         <div className="text-center">
-          <BrandMark size={56} className="mx-auto mb-3 rounded-2xl shadow-lg shadow-violet-500/20" />
-          <h1 className="text-xl font-semibold text-slate-800 dark:text-slate-100">Чем помочь?</h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+          <BrandMark size={56} className="mx-auto mb-3 rounded-2xl shadow-lg" />
+          <h1 className="text-xl font-semibold text-neutral-800 dark:text-neutral-100">Чем помочь?</h1>
+          <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
             Модель умеет искать в интернете и рисовать картинки — просто попросите.
           </p>
         </div>
@@ -104,16 +104,16 @@ export function MessageList({
                 key={s.title}
                 type="button"
                 onClick={() => onSuggestion(s.text)}
-                className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white/70 p-3 text-left transition hover:border-blue-300 hover:bg-blue-50/60 dark:border-slate-700/70 dark:bg-slate-900/50 dark:hover:border-blue-500/60 dark:hover:bg-slate-800/60"
+                className="flex items-start gap-3 rounded-2xl border border-neutral-200 bg-white/70 p-3 text-left transition hover:border-neutral-300 hover:bg-neutral-100/70 dark:border-neutral-700/70 dark:bg-neutral-900/50 dark:hover:border-neutral-600 dark:hover:bg-neutral-800/60"
               >
-                <span className="mt-0.5 text-blue-600 dark:text-blue-400">
+                <span className="mt-0.5 text-neutral-500 dark:text-neutral-400">
                   <Icon size={18} />
                 </span>
                 <span className="min-w-0">
-                  <span className="block text-sm font-medium text-slate-800 dark:text-slate-100">
+                  <span className="block text-sm font-medium text-neutral-800 dark:text-neutral-100">
                     {s.title}
                   </span>
-                  <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">
+                  <span className="mt-0.5 block text-xs text-neutral-500 dark:text-neutral-400">
                     {s.text}
                   </span>
                 </span>
@@ -125,7 +125,7 @@ export function MessageList({
         <button
           type="button"
           onClick={onOpenSettings}
-          className="text-xs text-slate-500 underline-offset-2 hover:underline dark:text-slate-400"
+          className="text-xs text-neutral-500 underline-offset-2 hover:underline dark:text-neutral-400"
         >
           Настроить подключение и инструменты (API key, модель, поиск)
         </button>
@@ -163,7 +163,7 @@ export function MessageList({
             setAtBottom(true)
           }}
           className={cn(
-            'absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-slate-300 bg-white/95 p-2 text-slate-600 shadow-lg backdrop-blur transition hover:bg-white dark:border-slate-600 dark:bg-slate-800/95 dark:text-slate-200',
+            'absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-neutral-300 bg-white/95 p-2 text-neutral-600 shadow-lg backdrop-blur transition hover:bg-white dark:border-neutral-600 dark:bg-neutral-800/95 dark:text-neutral-200',
             busy && 'animate-pulse',
           )}
           title="К последнему сообщению"

@@ -125,7 +125,7 @@ export function Composer({
 
   return (
     <div
-      className="relative border-t border-slate-200 bg-white/85 px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur dark:border-slate-800 dark:bg-slate-950/80 sm:px-6"
+      className="relative border-t border-neutral-200 bg-white/85 px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur dark:border-neutral-800 dark:bg-neutral-950/80 sm:px-6"
       onDragOver={(e) => {
         if (Array.from(e.dataTransfer?.types ?? []).includes('Files')) {
           e.preventDefault()
@@ -140,7 +140,7 @@ export function Composer({
       }}
     >
       {dragging && (
-        <div className="pointer-events-none absolute inset-2 z-10 grid place-items-center rounded-2xl border-2 border-dashed border-blue-400 bg-blue-50/80 text-sm font-medium text-blue-700 dark:bg-blue-950/70 dark:text-blue-200">
+        <div className="pointer-events-none absolute inset-2 z-10 grid place-items-center rounded-3xl border-2 border-dashed border-neutral-400 bg-neutral-100/90 text-sm font-medium text-neutral-700 dark:border-neutral-600 dark:bg-neutral-800/90 dark:text-neutral-200">
           Отпустите, чтобы прикрепить изображение
         </div>
       )}
@@ -159,12 +159,12 @@ export function Composer({
                 <img
                   src={a.dataUrl}
                   alt={a.name}
-                  className="h-16 w-16 rounded-xl border border-slate-300 object-cover dark:border-slate-700"
+                  className="h-16 w-16 rounded-xl border border-neutral-300 object-cover dark:border-neutral-700"
                 />
                 <button
                   type="button"
                   onClick={() => setAttachments((prev) => prev.filter((x) => x.id !== a.id))}
-                  className="absolute -top-1.5 -right-1.5 rounded-full bg-slate-900/85 p-0.5 text-white transition hover:bg-red-600"
+                  className="absolute -top-1.5 -right-1.5 rounded-full bg-neutral-900/85 p-0.5 text-white transition hover:bg-red-600"
                   aria-label="Убрать изображение"
                   title="Убрать изображение"
                 >
@@ -172,15 +172,15 @@ export function Composer({
                 </button>
               </div>
             ))}
-            {adding && <span className="self-center text-xs text-slate-500">Обработка…</span>}
+            {adding && <span className="self-center text-xs text-neutral-500">Обработка…</span>}
           </div>
         )}
 
         <div
           className={cn(
-            'flex items-end gap-2 rounded-2xl border bg-white p-2 shadow-sm transition dark:bg-slate-900',
+            'flex items-end gap-2 rounded-3xl border bg-white p-2 shadow-sm transition dark:bg-neutral-800/70',
             canSend
-              ? 'border-slate-300 focus-within:border-blue-400 dark:border-slate-700 dark:focus-within:border-blue-500/70'
+              ? 'border-neutral-300 focus-within:border-neutral-400 dark:border-neutral-700 dark:focus-within:border-neutral-500'
               : 'border-amber-300 dark:border-amber-900/60',
           )}
         >
@@ -190,7 +190,7 @@ export function Composer({
             disabled={!canSend}
             title={caps.vision ? 'Прикрепить изображение' : `Модель ${model} не поддерживает изображения на входе`}
             aria-label="Прикрепить изображение"
-            className="rounded-xl p-2.5 text-slate-500 transition active:bg-slate-200/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-400 dark:active:bg-slate-800"
+            className="rounded-xl p-2.5 text-neutral-500 transition active:bg-neutral-200/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-neutral-400 dark:active:bg-neutral-800"
           >
             {caps.vision ? <IconPaperclip size={19} /> : <IconImage size={19} />}
           </button>
@@ -201,10 +201,11 @@ export function Composer({
             rows={1}
             placeholder={canSend ? 'Спросите что-нибудь…' : 'Сначала заполните настройки подключения'}
             disabled={!canSend}
+            title={sendOnEnter ? 'Enter — отправить, Shift+Enter — новая строка' : 'Ctrl/Cmd+Enter — отправить'}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
-            className="max-h-[260px] min-h-[38px] flex-1 resize-none bg-transparent px-2 py-2 text-[15px] leading-relaxed text-slate-800 outline-none placeholder:text-slate-400 disabled:cursor-not-allowed dark:text-slate-100"
+            className="max-h-[260px] min-h-[38px] flex-1 resize-none bg-transparent px-2 py-2 text-[15px] leading-relaxed text-neutral-800 outline-none placeholder:text-neutral-400 disabled:cursor-not-allowed dark:text-neutral-100"
           />
 
           {busy ? (
@@ -212,7 +213,7 @@ export function Composer({
               type="button"
               onClick={onStop}
               title="Остановить генерацию"
-              className="rounded-xl bg-slate-800 p-2 text-white transition hover:bg-slate-900 dark:bg-slate-200 dark:text-slate-900 dark:hover:bg-white"
+              className="rounded-xl bg-neutral-800 p-2 text-white transition hover:bg-neutral-900 dark:bg-neutral-200 dark:text-neutral-900 dark:hover:bg-white"
             >
               <IconStop size={18} />
             </button>
@@ -222,24 +223,19 @@ export function Composer({
               onClick={submit}
               disabled={!canSend || !text.trim()}
               title="Отправить"
-              className="rounded-xl bg-blue-600 p-2 text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+              className="rounded-3xl bg-neutral-900 p-2 text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-white"
             >
               <IconSend size={18} />
             </button>
           )}
         </div>
 
-        <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 px-1 text-[11px] text-slate-400">
-          <span>
-            {sendOnEnter
-              ? 'Enter — отправить, Shift+Enter — новая строка'
-              : 'Ctrl/Cmd+Enter — отправить'}
-          </span>
+        <div className="mt-1.5 flex flex-wrap items-center justify-end gap-2 px-1 text-[11px] text-neutral-400">
           <span className="flex flex-wrap items-center gap-1.5">
             {toolsHint.map((t) => (
               <span
                 key={t}
-                className="rounded-full border border-slate-200 px-2 py-0.5 text-slate-500 dark:border-slate-700 dark:text-slate-400"
+                className="rounded-full border border-neutral-200 px-2 py-0.5 text-neutral-500 dark:border-neutral-700 dark:text-neutral-400"
               >
                 {t}
               </span>
@@ -338,14 +334,14 @@ function AttachRow({
     <button
       type="button"
       onClick={onClick}
-      className="flex w-full items-center gap-3 rounded-xl px-2 py-3 text-left transition active:bg-slate-100 dark:active:bg-slate-800"
+      className="flex w-full items-center gap-3 rounded-xl px-2 py-3 text-left transition active:bg-neutral-100 dark:active:bg-neutral-800"
     >
-      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200">
         {icon}
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block text-sm text-slate-800 dark:text-slate-100">{label}</span>
-        <span className="block text-[11px] text-slate-500 dark:text-slate-400">{hint}</span>
+        <span className="block text-sm text-neutral-800 dark:text-neutral-100">{label}</span>
+        <span className="block text-[11px] text-neutral-500 dark:text-neutral-400">{hint}</span>
       </span>
     </button>
   )

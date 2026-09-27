@@ -2,7 +2,7 @@ import type { Tool, ToolContext, ToolResult } from './types'
 
 /**
  * generate_image — реальная генерация изображений через API провайдера.
- * Модель выбирается в настройках → «Изображения», а сам механизм
+ * Модель выбирается в настройках → «Подключение», а сам механизм
  * (Images API vs chat-эндпоинт) изолирован в providers/openai/images.ts.
  */
 export const generateImageTool: Tool = {

@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import { IconAlert, IconCheck, IconRefresh } from './icons'
 import { ModelSelect } from './ModelSelect'
 import { Sheet } from './Sheet'
+import { btnCls, btnPrimaryCls, inputCls } from './controls'
 
 /**
  * Мастер первого запуска: два шага — подключение (Base URL + API key) и модели.
@@ -14,14 +15,8 @@ import { Sheet } from './Sheet'
  * подставляют адрес. Ключ и настройки остаются на устройстве.
  */
 
-const inputCls =
-  'w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-violet-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100'
-
-const primaryBtn =
-  'inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-sky-500 px-4 py-2.5 text-sm font-medium text-white transition disabled:opacity-50'
-
-const ghostBtn =
-  'inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-600 transition hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'
+const primaryBtn = cn(btnPrimaryCls, 'w-full')
+const ghostBtn = cn(btnCls, 'justify-center py-2.5')
 
 interface SetupDialogProps {
   open: boolean
@@ -162,7 +157,7 @@ export function SetupDialog({ open, onClose, firstRun = false }: SetupDialogProp
       {step === 0 && (
         <div className="space-y-4">
           <div>
-            <div className="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300">
+            <div className="mb-1.5 text-xs font-medium text-neutral-600 dark:text-neutral-300">
               Провайдер
             </div>
             <div className="flex flex-wrap gap-1.5">
@@ -177,8 +172,8 @@ export function SetupDialog({ open, onClose, firstRun = false }: SetupDialogProp
                   className={cn(
                     'rounded-full border px-3 py-1.5 text-xs transition',
                     providerId === p.id
-                      ? 'border-violet-400 bg-violet-50 text-violet-700 dark:border-violet-500/60 dark:bg-violet-950/40 dark:text-violet-200'
-                      : 'border-slate-200 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800',
+                      ? 'border-neutral-400 bg-neutral-100 font-medium text-neutral-900 dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-100'
+                      : 'border-neutral-200 text-neutral-600 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800',
                   )}
                 >
                   {p.label}
@@ -188,7 +183,7 @@ export function SetupDialog({ open, onClose, firstRun = false }: SetupDialogProp
           </div>
 
           {settings.mode === 'proxy' ? (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100">
+            <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800/60 dark:text-neutral-300">
               Включён proxy-режим: адрес API и ключ задаются на сервере (PROVIDER_BASE_URL и
               PROVIDER_API_KEY в .env). Убедитесь, что backend запущен, и нажмите «Проверить и
               продолжить».
@@ -196,7 +191,7 @@ export function SetupDialog({ open, onClose, firstRun = false }: SetupDialogProp
           ) : (
             <>
               <label className="block">
-                <span className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-300">
+                <span className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-300">
                   Base URL
                 </span>
                 <input
@@ -211,13 +206,13 @@ export function SetupDialog({ open, onClose, firstRun = false }: SetupDialogProp
                   autoComplete="off"
                   inputMode="url"
                 />
-                <span className="mt-1 block text-[11px] text-slate-500 dark:text-slate-400">
+                <span className="mt-1 block text-[11px] text-neutral-500 dark:text-neutral-400">
                   Адрес OpenAI-совместимого API — обычно оканчивается на /v1.
                 </span>
               </label>
 
               <label className="block">
-                <span className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-300">
+                <span className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-300">
                   API key
                 </span>
                 <div className="flex gap-2">
@@ -234,7 +229,7 @@ export function SetupDialog({ open, onClose, firstRun = false }: SetupDialogProp
                     {showKey ? 'Скрыть' : 'Показать'}
                   </button>
                 </div>
-                <span className="mt-1 block text-[11px] text-slate-500 dark:text-slate-400">
+                <span className="mt-1 block text-[11px] text-neutral-500 dark:text-neutral-400">
                   Ключ уходит только в выбранный вами API и хранится локально.
                   {preset?.keyUrl ? (
                     <>
@@ -266,7 +261,7 @@ export function SetupDialog({ open, onClose, firstRun = false }: SetupDialogProp
       {step === 1 && (
         <div className="space-y-4">
           <div>
-            <div className="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300">
+            <div className="mb-1.5 text-xs font-medium text-neutral-600 dark:text-neutral-300">
               Модель для чата
             </div>
             <ModelSelect
@@ -275,25 +270,25 @@ export function SetupDialog({ open, onClose, firstRun = false }: SetupDialogProp
               onChange={setModel}
               placeholder={preset?.modelHint ?? 'Выбрать модель'}
             />
-            <span className="mt-1 block text-[11px] text-slate-500 dark:text-slate-400">
+            <span className="mt-1 block text-[11px] text-neutral-500 dark:text-neutral-400">
               Список получен из GET /v1/models. Нужной модели нет? Введите её id вручную в
               селекторе.
             </span>
           </div>
 
-          <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+          <div className="rounded-xl border border-neutral-200 p-3 dark:border-neutral-700">
             <label className="flex items-start gap-2">
               <input
                 type="checkbox"
                 checked={imageEnabled}
                 onChange={(e) => setImageEnabled(e.target.checked)}
-                className="mt-0.5 h-4 w-4 accent-violet-600"
+                className="mt-0.5 h-4 w-4 accent-neutral-900 dark:accent-neutral-300"
               />
               <span>
-                <span className="block text-sm text-slate-700 dark:text-slate-200">
+                <span className="block text-sm text-neutral-700 dark:text-neutral-200">
                   Генерация изображений
                 </span>
-                <span className="block text-[11px] text-slate-500 dark:text-slate-400">
+                <span className="block text-[11px] text-neutral-500 dark:text-neutral-400">
                   Необязательно: не нужна — оставьте выключенной и нажмите «Готово».
                 </span>
               </span>

@@ -33,17 +33,17 @@ export function StreamStatus({
   return (
     <div
       className={cn(
-        'mb-1.5 flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400',
+        'mb-1.5 flex items-center gap-2 text-sm text-neutral-500 dark:text-neutral-400',
         className,
       )}
     >
       <span className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400/50" />
-        <span className="relative inline-flex h-2 w-2 rounded-full bg-violet-500" />
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-neutral-400/50" />
+        <span className="relative inline-flex h-2 w-2 rounded-full bg-neutral-500 dark:bg-neutral-400" />
       </span>
       {icon && <span aria-hidden="true">{icon}</span>}
       <span className="text-shimmer font-medium">{label}</span>
-      {elapsedMs > 0 && <span className="text-xs text-slate-400">{formatElapsed(elapsedMs)}</span>}
+      {elapsedMs > 0 && <span className="text-xs text-neutral-400">{formatElapsed(elapsedMs)}</span>}
     </div>
   )
 }
@@ -104,7 +104,7 @@ export function ThinkingPanel({
   return (
     <div
       className={cn(
-        'mb-2 overflow-hidden rounded-xl border border-violet-200 bg-violet-50/60 dark:border-violet-900/60 dark:bg-violet-950/30',
+        'mb-2 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-50/70 dark:border-neutral-700/70 dark:bg-neutral-900/40',
         className,
       )}
     >
@@ -112,7 +112,7 @@ export function ThinkingPanel({
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="relative flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-violet-800 dark:text-violet-200"
+        className="relative flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-neutral-700 dark:text-neutral-200"
       >
         <IconSparkles size={15} />
         <span className="min-w-0 flex-1 truncate">
@@ -126,7 +126,7 @@ export function ThinkingPanel({
           )}
         </span>
         {streaming && seconds > 0 && (
-          <span className="shrink-0 text-xs text-violet-500/80 dark:text-violet-300/70">
+          <span className="shrink-0 text-xs text-neutral-400 dark:text-neutral-500">
             {formatElapsed(seconds)}
           </span>
         )}
@@ -139,7 +139,7 @@ export function ThinkingPanel({
       {open && (
         <div
           ref={bodyRef}
-          className="max-h-64 overflow-auto border-t border-violet-200 px-3 py-2 text-sm whitespace-pre-wrap text-violet-900/90 dark:border-violet-900/60 dark:text-violet-100/90"
+          className="max-h-64 overflow-auto border-t border-neutral-200 px-3 py-2 text-sm whitespace-pre-wrap text-neutral-700 dark:border-neutral-700/70 dark:text-neutral-300"
         >
           {text}
         </div>

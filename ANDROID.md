@@ -4,7 +4,7 @@
 
 - `applicationId` / `namespace`: **`app.synth.hub`**
 - Название: **SYNTH** (`android/app/src/main/res/values/strings.xml`)
-- Версия: `versionCode 1`, `versionName "1.0.0"` (`android/app/build.gradle`)
+- Версия: `versionCode 2`, `versionName "1.1.0"` (`android/app/build.gradle`)
 - minSdk 24, target/compile SDK — из `android/variables.gradle`
 
 ## Сборка

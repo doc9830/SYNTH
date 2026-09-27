@@ -14,9 +14,9 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const PUBLIC_DIR = resolve(root, 'public')
 const ICONS_DIR = resolve(PUBLIC_DIR, 'icons')
 
-/** Знак «во всю» иконки; maskable-вариант — меньше (safe zone 40% радиуса). */
+/** Знак «во всю» иконки; maskable-вариант — мельче (safe zone 40% радиуса). */
 const ICON_SCALE = 1.05
-const MASKABLE_SCALE = 1.35
+const MASKABLE_SCALE = 1.12
 
 function write(path, data) {
   mkdirSync(dirname(path), { recursive: true })

@@ -78,7 +78,7 @@ body {
 /* ── Скроллбары ─────────────────────────────────────────────── */
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgb(148 163 184 / 0.5) transparent;
+  scrollbar-color: rgb(163 163 163 / 0.5) transparent;
 }
 *::-webkit-scrollbar {
   width: 8px;
@@ -88,7 +88,7 @@ body {
   background: transparent;
 }
 *::-webkit-scrollbar-thumb {
-  background-color: rgb(148 163 184 / 0.45);
+  background-color: rgb(163 163 163 / 0.45);
   border-radius: 9999px;
 }
 
@@ -141,36 +141,38 @@ body {
   margin: 0.25em 0;
 }
 .chat-md a {
-  color: #2563eb;
+  /* ссылки в ответах — как текст с подчёркиванием (нейтрально, без «синевы») */
+  color: inherit;
   text-decoration: underline;
+  text-decoration-color: rgb(115 115 115 / 0.55);
   text-underline-offset: 2px;
 }
 .dark .chat-md a {
-  color: #60a5fa;
+  text-decoration-color: rgb(163 163 163 / 0.5);
 }
 .chat-md blockquote {
-  border-left: 3px solid rgb(148 163 184 / 0.6);
+  border-left: 3px solid rgb(163 163 163 / 0.6);
   padding-left: 0.8em;
-  color: rgb(100 116 139);
+  color: rgb(115 115 115);
 }
 .dark .chat-md blockquote {
-  color: rgb(148 163 184);
+  color: rgb(163 163 163);
 }
 .chat-md code {
   font-family: var(--font-mono);
   font-size: 0.9em;
 }
 .chat-md :not(pre) > code {
-  background: rgb(15 23 42 / 0.07);
+  background: rgb(23 23 23 / 0.06);
   padding: 0.15em 0.4em;
   border-radius: 0.35em;
 }
 .dark .chat-md :not(pre) > code {
-  background: rgb(148 163 184 / 0.18);
+  background: rgb(163 163 163 / 0.18);
 }
 .chat-md pre {
-  background: #0f172a;
-  color: #e2e8f0;
+  background: #171717;
+  color: #e5e5e5;
   padding: 0.9rem 1rem;
   border-radius: 0.75rem;
   overflow-x: auto;
@@ -184,23 +186,23 @@ body {
 }
 .chat-md th,
 .chat-md td {
-  border: 1px solid rgb(148 163 184 / 0.45);
+  border: 1px solid rgb(163 163 163 / 0.45);
   padding: 0.35em 0.65em;
   text-align: left;
 }
 .chat-md th {
-  background: rgb(148 163 184 / 0.14);
+  background: rgb(163 163 163 / 0.14);
 }
 .chat-md hr {
   border: none;
-  border-top: 1px solid rgb(148 163 184 / 0.4);
+  border-top: 1px solid rgb(163 163 163 / 0.4);
   margin: 1em 0;
 }
 
 /* ── Подсветка синтаксиса (highlight.js) ────────────────────── */
 .hljs-comment,
 .hljs-quote {
-  color: #94a3b8;
+  color: #a3a3a3;
   font-style: italic;
 }
 .hljs-keyword,
@@ -239,7 +241,7 @@ body {
   color: #fcd34d;
 }
 .hljs-tag {
-  color: #94a3b8;
+  color: #a3a3a3;
 }
 .hljs-emphasis {
   font-style: italic;
@@ -262,11 +264,11 @@ body {
 .text-shimmer {
   background-image: linear-gradient(
     90deg,
-    rgb(100 116 139) 0%,
-    rgb(30 41 59) 25%,
-    rgb(100 116 139) 50%,
-    rgb(30 41 59) 75%,
-    rgb(100 116 139) 100%
+    rgb(115 115 115) 0%,
+    rgb(23 23 23) 25%,
+    rgb(115 115 115) 50%,
+    rgb(23 23 23) 75%,
+    rgb(115 115 115) 100%
   );
   background-size: 200% 100%;
   -webkit-background-clip: text;
@@ -277,11 +279,11 @@ body {
 .dark .text-shimmer {
   background-image: linear-gradient(
     90deg,
-    rgb(148 163 184) 0%,
-    rgb(248 250 252) 25%,
-    rgb(148 163 184) 50%,
-    rgb(248 250 252) 75%,
-    rgb(148 163 184) 100%
+    rgb(163 163 163) 0%,
+    rgb(245 245 245) 25%,
+    rgb(163 163 163) 50%,
+    rgb(245 245 245) 75%,
+    rgb(163 163 163) 100%
   );
 }
 
@@ -300,7 +302,7 @@ body {
   top: 0;
   bottom: 0;
   width: 25%;
-  background: linear-gradient(90deg, transparent, rgb(124 58 237 / 0.6), transparent);
+  background: linear-gradient(90deg, transparent, rgb(160 160 160 / 0.55), transparent);
   animation: synth-sweep 1.6s ease-in-out infinite;
 }
 

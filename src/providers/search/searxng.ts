@@ -16,7 +16,7 @@ export function createSearxngProvider(config: { baseUrl: string }): WebSearchPro
       const base = config.baseUrl.trim().replace(/\/+$/, '')
       if (!base) {
         throw new Error(
-          'Для SearXNG укажите адрес инстанса (Settings → Web Search → Base URL), например http://localhost:8080',
+          'Для SearXNG укажите адрес инстанса (Настройки → Поиск → Base URL), например http://localhost:8080',
         )
       }
 

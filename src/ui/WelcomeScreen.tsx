@@ -33,19 +33,17 @@ interface WelcomeScreenProps {
 export function WelcomeScreen({ onSetup, onOpenSettings }: WelcomeScreenProps) {
   return (
     <div className="relative flex-1 overflow-y-auto">
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-violet-100 via-slate-50 to-sky-100 dark:from-violet-950/40 dark:via-slate-950 dark:to-sky-950/40" />
-
       <div className="relative mx-auto flex min-h-full w-full max-w-2xl flex-col items-center justify-center gap-6 px-5 py-10 text-center">
-        <BrandMark size={88} className="rounded-[26px] shadow-xl shadow-violet-500/20" />
+        <BrandMark size={88} className="rounded-[26px] shadow-lg" />
 
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-slate-900 dark:text-white">
+          <h1 className="text-3xl font-semibold tracking-tight text-neutral-900 dark:text-white">
             {APP_NAME}
           </h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{APP_TAGLINE}</p>
+          <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">{APP_TAGLINE}</p>
         </div>
 
-        <p className="max-w-lg text-sm leading-relaxed text-slate-600 dark:text-slate-300">
+        <p className="max-w-lg text-sm leading-relaxed text-neutral-600 dark:text-neutral-300">
           Универсальный чат-клиент для любого OpenAI-совместимого API. Укажите адрес и ключ —
           SYNTH подтянет список доступных моделей, и можно сразу общаться.
         </p>
@@ -54,15 +52,15 @@ export function WelcomeScreen({ onSetup, onOpenSettings }: WelcomeScreenProps) {
           {FEATURES.map((f) => (
             <div
               key={f.title}
-              className="rounded-2xl border border-slate-200 bg-white/70 p-3 backdrop-blur dark:border-slate-700/70 dark:bg-slate-900/50"
+              className="rounded-2xl border border-neutral-200 bg-white/70 p-3 backdrop-blur dark:border-neutral-700/70 dark:bg-neutral-900/50"
             >
-              <span className="text-violet-600 dark:text-violet-400">
+              <span className="text-neutral-500 dark:text-neutral-400">
                 <f.icon size={18} />
               </span>
-              <div className="mt-1.5 text-sm font-medium text-slate-800 dark:text-slate-100">
+              <div className="mt-1.5 text-sm font-medium text-neutral-800 dark:text-neutral-100">
                 {f.title}
               </div>
-              <div className="mt-0.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+              <div className="mt-0.5 text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
                 {f.text}
               </div>
             </div>
@@ -73,20 +71,20 @@ export function WelcomeScreen({ onSetup, onOpenSettings }: WelcomeScreenProps) {
           <button
             type="button"
             onClick={onSetup}
-            className="w-full rounded-2xl bg-gradient-to-r from-violet-600 to-sky-500 px-4 py-3 text-sm font-medium text-white shadow-lg shadow-violet-500/20 transition active:scale-[0.99]"
+            className="w-full rounded-2xl bg-neutral-900 px-4 py-3 text-sm font-medium text-white shadow-lg transition hover:bg-neutral-800 active:scale-[0.99] dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-white"
           >
             Настроить подключение
           </button>
           <button
             type="button"
             onClick={onOpenSettings}
-            className="w-full rounded-2xl border border-slate-200 px-4 py-2.5 text-sm text-slate-600 transition hover:bg-white/70 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800/60"
+            className="w-full rounded-2xl border border-neutral-200 px-4 py-2.5 text-sm text-neutral-600 transition hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800/60"
           >
             Все настройки
           </button>
         </div>
 
-        <p className="text-[11px] text-slate-400 dark:text-slate-500">
+        <p className="text-[11px] text-neutral-400 dark:text-neutral-500">
           Версия {APP_VERSION} · ключ и история хранятся только на этом устройстве
         </p>
       </div>

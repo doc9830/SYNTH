@@ -44,7 +44,7 @@ function ActionButton({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        'rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-200/70 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-700/60 dark:hover:text-slate-100',
+        'rounded-lg p-1.5 text-neutral-500 transition hover:bg-neutral-200/70 hover:text-neutral-800 disabled:cursor-not-allowed disabled:opacity-40 dark:text-neutral-400 dark:hover:bg-neutral-700/60 dark:hover:text-neutral-100',
         danger && 'hover:bg-red-100 hover:text-red-700 dark:hover:bg-red-950/60 dark:hover:text-red-300',
       )}
     >
@@ -102,14 +102,14 @@ function UserMessage({
                 src={a.dataUrl}
                 alt={a.name}
                 title={a.name}
-                className="max-h-40 w-auto rounded-xl border border-slate-300/70 object-cover dark:border-slate-700/70"
+                className="max-h-40 w-auto rounded-xl border border-neutral-300/70 object-cover dark:border-neutral-700/70"
               />
             ))}
           </div>
         )}
 
         {editing ? (
-          <div className="w-full min-w-[16rem] rounded-2xl border border-blue-400 bg-white p-2 dark:border-blue-500/70 dark:bg-slate-900">
+          <div className="w-full min-w-[16rem] rounded-2xl border border-neutral-300 bg-white p-2 dark:border-neutral-600 dark:bg-neutral-900">
             <textarea
               autoFocus
               value={draft}
@@ -126,7 +126,7 @@ function UserMessage({
                   save()
                 }
               }}
-              className="w-full resize-none bg-transparent text-[15px] leading-relaxed text-slate-800 outline-none dark:text-slate-100"
+              className="w-full resize-none bg-transparent text-[15px] leading-relaxed text-neutral-800 outline-none dark:text-neutral-100"
             />
             <div className="flex justify-end gap-2 pt-1">
               <button
@@ -135,28 +135,28 @@ function UserMessage({
                   setEditing(false)
                   setDraft(message.content)
                 }}
-                className="rounded-lg px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+                className="rounded-lg px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
               >
                 Отмена
               </button>
               <button
                 type="button"
                 onClick={save}
-                className="rounded-lg bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700"
+                className="rounded-lg bg-neutral-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-white"
               >
                 Сохранить и переспросить
               </button>
             </div>
           </div>
         ) : (
-          <div className="rounded-2xl rounded-br-md bg-blue-600 px-3.5 py-2 text-[15px] leading-relaxed whitespace-pre-wrap text-white">
+          <div className="rounded-2xl rounded-br-md bg-neutral-100 px-3.5 py-2 text-[15px] leading-relaxed whitespace-pre-wrap text-neutral-900 dark:bg-neutral-800 dark:text-neutral-50">
             {message.content || <span className="opacity-70">(только вложение)</span>}
           </div>
         )}
 
         {!editing && (
           <div className="flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
-            <span className="mr-1 text-[11px] text-slate-400">{formatTime(message.createdAt)}</span>
+            <span className="mr-1 text-[11px] text-neutral-400">{formatTime(message.createdAt)}</span>
             <CopyButton text={message.content} />
             <ActionButton
               title="Изменить и переспросить"
@@ -221,7 +221,7 @@ function AssistantMessage({
         {message.content && <Markdown content={message.content} />}
 
         {streaming && message.content && (
-          <span className="caret-blink ml-0.5 inline-block h-4 w-[2px] bg-violet-500 align-middle dark:bg-violet-400" />
+          <span className="caret-blink ml-0.5 inline-block h-4 w-[2px] bg-neutral-400 align-middle dark:bg-neutral-500" />
         )}
 
         {images.length > 0 && <ImageGrid images={images} />}
@@ -247,12 +247,12 @@ function AssistantMessage({
         )}
 
         {message.status === 'stopped' && (
-          <div className="mt-1 text-xs text-amber-600 dark:text-amber-400">Генерация остановлена</div>
+          <div className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">Генерация остановлена</div>
         )}
 
         {(message.content || toolCalls.length > 0 || message.status !== 'streaming') && (
           <div className="mt-1 flex flex-wrap items-center gap-0.5 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
-            <span className="mr-1 text-[11px] text-slate-400">
+            <span className="mr-1 text-[11px] text-neutral-400">
               {formatTime(message.createdAt)}
               {message.model ? ` · ${message.model}` : ''}
               {message.usage?.totalTokens ? ` · ${message.usage.totalTokens} токенов` : ''}

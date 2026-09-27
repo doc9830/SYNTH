@@ -10,6 +10,7 @@ import {
   type StreamHandlers,
 } from '@/providers/openai'
 import type { AssistantTurn, WireMessage, WireTool } from '@/providers/openai/types'
+import type { ModelInfo } from '@/providers/openai/client'
 import { createSearchProvider } from '@/providers/search'
 import { resolveTransport, toOpenAiTransport, type ResolvedTransport } from './transport'
 
@@ -34,7 +35,7 @@ function resolve(settings: Settings): ResolvedTransport {
   } catch (err) {
     throw new ApiError({
       message: err instanceof Error ? err.message : String(err),
-      hint: 'Откройте Settings → API и заполните Base URL и API key (или переключитесь на proxy-режим).',
+      hint: 'Откройте Настройки → Подключение и заполните Base URL и API key (или переключитесь на proxy-режим).',
     })
   }
 }
@@ -66,6 +67,18 @@ export async function listModels(settings: Settings, signal?: AbortSignal): Prom
   const transport: OpenAiTransport = toOpenAiTransport(resolved)
   const { fetchModelIds } = await import('@/providers/openai/client')
   return fetchModelIds(transport, signal)
+}
+
+/**
+ * Модели с ценами (если провайдер их отдаёт — OpenRouter, некоторые прокси).
+ * Провайдеры без pricing возвращают только id, и это нормально:
+ * интерфейс просто не показывает цену.
+ */
+export async function listModelInfos(settings: Settings, signal?: AbortSignal): Promise<ModelInfo[]> {
+  const resolved = resolve(settings)
+  const transport: OpenAiTransport = toOpenAiTransport(resolved)
+  const { fetchModels } = await import('@/providers/openai/client')
+  return fetchModels(transport, signal)
 }
 
 /** База backend-прокси: пусто → эндпоинты текущего сайта (/api/…). */
@@ -109,7 +122,7 @@ export async function searchWeb(
   if (!provider) {
     throw new ApiError({
       message: 'Веб-поиск отключён.',
-      hint: 'Включите его в Settings → Web Search.',
+      hint: 'Включите его в Настройки → Поиск.',
     })
   }
 
@@ -147,7 +160,7 @@ export async function searchWeb(
       throw new ApiError({
         message: `Не удалось обратиться к backend-поиску (${backendSearchUrl}): ${err instanceof Error ? err.message : String(err)}`,
         endpoint: backendSearchUrl,
-        hint: 'Запустите backend (npm run dev:api). Если фронтенд открыт не с backend-хоста, укажите Settings → Web Search → Backend URL, например http://localhost:8787.',
+        hint: 'Запустите backend (npm run dev:api). Если фронтенд открыт не с backend-хоста, укажите Настройки → Поиск → Backend URL, например http://localhost:8787.',
       })
     }
     if (!res.ok) throw await errorFromResponse(res, backendSearchUrl)
@@ -164,7 +177,7 @@ export async function searchWeb(
       message,
       endpoint: provider.label,
       hint: cors
-        ? `Провайдер «${provider.label}» не разрешает запросы из браузера (CORS). Включите proxy-режим в Settings → API или укажите Backend URL в Settings → Web Search.`
+        ? `Провайдер «${provider.label}» не разрешает запросы из браузера (CORS). Включите proxy-режим в Настройки → Подключение или укажите Backend URL в Настройки → Поиск.`
         : undefined,
     })
   }
@@ -208,7 +221,7 @@ async function readLocalPage(
   } catch (err) {
     throw new ApiError({
       message: err instanceof Error ? err.message : String(err),
-      hint: 'Проверьте ссылку и соединение. Скриншоты страниц требуют внешнего backend: укажите его в Settings → Web Search → Backend URL.',
+      hint: 'Проверьте ссылку и соединение. Скриншоты страниц требуют внешнего backend: укажите его в Настройки → Поиск → Backend URL.',
     })
   }
 
@@ -266,7 +279,7 @@ export async function readPage(
     throw new ApiError({
       message: `Не удалось обратиться к backend-чтению страниц (${endpoint}): ${err instanceof Error ? err.message : String(err)}`,
       endpoint,
-      hint: 'Нужен запущенный backend: npm run dev:api (для скриншотов — с установленным Chrome). Если фронтенд открыт не с backend-хоста — укажите Settings → Web Search → Backend URL, например http://localhost:8787.',
+      hint: 'Нужен запущенный backend: npm run dev:api (для скриншотов — с установленным Chrome). Если фронтенд открыт не с backend-хоста — укажите Настройки → Поиск → Backend URL, например http://localhost:8787.',
     })
   }
   if (!res.ok) throw await errorFromResponse(res, endpoint)

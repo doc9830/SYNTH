@@ -138,7 +138,7 @@ export const readUrlTool: Tool = {
 
     if (!ctx.settings.search.readPages) {
       throw new Error(
-        'Чтение страниц отключено в настройках: Settings → Web Search → «Читать присланные ссылки».',
+        'Чтение страниц отключено в настройках: Настройки → Поиск → «Читать присланные ссылки».',
       )
     }
 

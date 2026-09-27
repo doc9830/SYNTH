@@ -404,7 +404,7 @@ export function createKeylessProvider(config: { engine?: KeylessEngine } = {}): 
       // Явно выбранный движок не смог — сообщаем причину, а не «ничего не найдено»
       if (engine !== 'auto' && failures.length) {
         throw new Error(
-          `${failures.join('; ')}. Попробуйте движок «Авто» или другой движок в Settings → Web Search.`,
+          `${failures.join('; ')}. Попробуйте движок «Авто» или другой движок в Настройки → Поиск.`,
         )
       }
       // «Авто»: все движки упали — это ошибка, а не пустой результат

@@ -15,7 +15,7 @@ export function useAppearance(): void {
       const dark = theme === 'dark' || (theme === 'system' && media.matches)
       root.classList.toggle('dark', dark)
       const meta = document.querySelector('meta[name="theme-color"]')
-      if (meta) meta.setAttribute('content', dark ? '#0b0d12' : '#ffffff')
+      if (meta) meta.setAttribute('content', dark ? '#0a0a0a' : '#ffffff')
       // в APK цвет статус-бара синхронизируем с темой
       void syncStatusBar(dark)
     }

@@ -63,7 +63,7 @@ export function UpdateDialog() {
             type="button"
             disabled={downloading}
             onClick={() => void downloadAndInstall()}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-sky-500 px-4 py-2.5 text-sm font-medium text-white transition disabled:opacity-60"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-neutral-800 disabled:opacity-60 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-white"
           >
             {downloading ? (
               <IconRefresh size={16} className="animate-spin" />
@@ -76,14 +76,14 @@ export function UpdateDialog() {
             <button
               type="button"
               onClick={close}
-              className="flex-1 rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-600 transition hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              className="flex-1 rounded-xl border border-neutral-300 px-3 py-2 text-sm text-neutral-600 transition hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
             >
               Позже
             </button>
             <button
               type="button"
               onClick={skip}
-              className="flex-1 rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-600 transition hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              className="flex-1 rounded-xl border border-neutral-300 px-3 py-2 text-sm text-neutral-600 transition hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
             >
               Пропустить версию
             </button>
@@ -92,32 +92,32 @@ export function UpdateDialog() {
       }
     >
       <div className="space-y-3">
-        <div className="flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-100">
-          <span className="rounded-lg bg-violet-100 px-2 py-0.5 text-xs text-violet-700 dark:bg-violet-950/50 dark:text-violet-200">
+        <div className="flex items-center gap-2 text-sm font-medium text-neutral-800 dark:text-neutral-100">
+          <span className="rounded-lg bg-neutral-100 px-2 py-0.5 text-xs text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200">
             {info.title}
           </span>
         </div>
 
         {downloading && (
           <div>
-            <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-800">
               <div
-                className="h-full rounded-full bg-gradient-to-r from-violet-500 to-sky-500 transition-all"
+                className="h-full rounded-full bg-neutral-500 transition-all dark:bg-neutral-400"
                 style={{ width: `${Math.max(4, percent)}%` }}
               />
             </div>
-            <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+            <div className="mt-1 text-[11px] text-neutral-500 dark:text-neutral-400">
               Загрузка APK: {percent}%
             </div>
           </div>
         )}
 
         {info.notes ? (
-          <div className="max-h-72 overflow-auto rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+          <div className="max-h-72 overflow-auto rounded-xl border border-neutral-200 p-3 dark:border-neutral-700">
             <Markdown content={info.notes} />
           </div>
         ) : (
-          <p className="text-sm text-slate-500 dark:text-slate-400">
+          <p className="text-sm text-neutral-500 dark:text-neutral-400">
             Описание изменений не заполнено — подробности на странице релиза.
           </p>
         )}
@@ -129,7 +129,7 @@ export function UpdateDialog() {
           </div>
         )}
 
-        <p className="text-[11px] text-slate-500 dark:text-slate-400">
+        <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
           {canInstallInApp
             ? 'SYNTH скачает APK и предложит установку. Данные и настройки сохранятся.'
             : 'В браузере установка APK недоступна — откроется страница релиза.'}{' '}

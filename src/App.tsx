@@ -128,7 +128,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-[100dvh] w-full overflow-hidden bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+    <div className="flex h-[100dvh] w-full overflow-hidden bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
       <Sidebar
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}

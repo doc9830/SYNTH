@@ -25,6 +25,20 @@ const MODELS = [
   'ideogram-v3',
 ]
 
+/**
+ * Цены части моделей в формате OpenRouter (доллары за токен) — чтобы в селекторе
+ * моделей было видно, что приложение показывает стоимость, когда провайдер её отдаёт.
+ */
+const PRICING = {
+  'gpt-4o': { prompt: '0.0000025', completion: '0.00001' },
+  'gpt-4o-mini': { prompt: '0.00000015', completion: '0.0000006' },
+  'o4-mini': { prompt: '0.0000011', completion: '0.0000044' },
+  'claude-sonnet-4.5': { prompt: '0.000003', completion: '0.000015' },
+  'deepseek-chat': { prompt: '0.00000027', completion: '0.0000011' },
+  'mistral-large-latest': { prompt: '0.000002', completion: '0.000006' },
+  'gemini-2.5-flash-image': { prompt: '0.0000003', completion: '0.00003' },
+}
+
 const CORS = {
   'access-control-allow-origin': '*',
   'access-control-allow-headers': '*',
@@ -51,7 +65,14 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/v1/models') {
     console.log('[mock] GET /v1/models')
-    send(res, 200, { object: 'list', data: MODELS.map((id) => ({ id, object: 'model' })) })
+    send(res, 200, {
+      object: 'list',
+      data: MODELS.map((id) => ({
+        id,
+        object: 'model',
+        ...(PRICING[id] ? { pricing: PRICING[id] } : {}),
+      })),
+    })
     return
   }
 

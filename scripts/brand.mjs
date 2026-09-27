@@ -1,57 +1,90 @@
 import { deflateSync } from 'node:zlib'
 
 /**
- * Фирменный стиль SYNTH: программная отрисовка логотипа без внешних зависимостей.
+ * Фирменный стиль SYNTH: программная отрисовка знака без внешних зависимостей.
  *
- * Знак — «нейронный хаб»: центральный узел (акцентный цвет), три узла-спутника
- * и связи между ними. Используется и в веб-иконках (public/), и в ассетах
- * Android-проекта (scripts/gen-android-assets.mjs).
+ * Знак — минималистичная монограмма «S»: одна линия постоянной толщины с
+ * круглыми концами на графитово-сером фоне. Та же геометрия используется в
+ * веб-иконках (public/), в ассетах Android (scripts/gen-android-assets.mjs)
+ * и в интерфейсе (src/ui/BrandMark.tsx).
  */
 
 export const APP_NAME = 'SYNTH'
 export const APP_TAGLINE = 'Synthetic Neural & Tool Hub'
 
 // ── Палитра ─────────────────────────────────────────────────────────
-/** Градиент фона: фиолетовый → почти чёрный (как в тёмной теме приложения). */
-export const BG_FROM = [124, 58, 237] // violet-600
-export const BG_TO = [11, 13, 18] // #0b0d12
-/** Акцент (центральный узел). */
-export const ACCENT = [34, 211, 238] // cyan-400
-export const NODE = [255, 255, 255]
+/** Фон: серьёзный графит — от светлого сверху к почти чёрному снизу. */
+export const BG_FROM = [58, 62, 68] // #3A3E44
+export const BG_TO = [22, 24, 27] // #16181B
+/** Знак: нейтральный почти-белый (не белоснежный — «спокойнее»). */
+export const ACCENT = [244, 245, 247] // #F4F5F7
+export const NODE = ACCENT
 
-// ── Геометрия знака (в долях холста, y вниз) ────────────────────────
-const CENTER = { x: 0.5, y: 0.5, r: 0.095 }
-const ORBIT = 0.262
-const ANGLES = [-90, 30, 150] // градусы: верх, право-низ, лево-низ
-const SATELLITE_R = 0.072
-const LINK_HALF_WIDTH = 0.021
+// ── Геометрия знака «S» (доли холста, y вниз) ───────────────────────
+/** Верхний и нижний полукруги: одна линия = дуга + наклонный переход + дуга. */
+const UPPER = { x: 0.5, y: 0.325, rx: 0.175, ry: 0.135 }
+const LOWER = { x: 0.5, y: 0.675, rx: 0.175, ry: 0.135 }
+/** Половина толщины линии. */
+const STROKE = 0.038
+/** Сегментов на дугу (больше — глаже, но медленнее отрисовка). */
+const ARC_SEGMENTS = 40
 
-const SATELLITES = ANGLES.map((deg) => {
+function ellipsePoint(arc, deg) {
   const rad = (deg * Math.PI) / 180
-  return {
-    x: CENTER.x + ORBIT * Math.cos(rad),
-    y: CENTER.y + ORBIT * Math.sin(rad),
-    r: SATELLITE_R,
+  return { x: arc.x + arc.rx * Math.cos(rad), y: arc.y + arc.ry * Math.sin(rad) }
+}
+
+/** Точки осевой линии знака: верхняя дуга, наклонный переход, нижняя дуга. */
+function buildPath(segments = ARC_SEGMENTS) {
+  const points = []
+  // Верхняя дуга: от правого окончания через верх к нижне-левому краю.
+  for (let i = 0; i <= segments; i += 1) points.push(ellipsePoint(UPPER, 20 - 230 * (i / segments)))
+  // Нижняя дуга: от верхне-правого края через низ к левому окончанию.
+  for (let i = 0; i <= segments; i += 1) points.push(ellipsePoint(LOWER, -30 + 240 * (i / segments)))
+  return points
+}
+
+/** Осевая линия знака (для SVG и растровой отрисовки). */
+export const STROKE_PATH = buildPath()
+
+/** Границы знака с учётом толщины линии — для быстрой отбраковки точек. */
+const BOUNDS = (() => {
+  let minX = 1
+  let maxX = 0
+  let minY = 1
+  let maxY = 0
+  for (const p of STROKE_PATH) {
+    minX = Math.min(minX, p.x)
+    maxX = Math.max(maxX, p.x)
+    minY = Math.min(minY, p.y)
+    maxY = Math.max(maxY, p.y)
   }
-})
+  return { minX: minX - STROKE, maxX: maxX + STROKE, minY: minY - STROKE, maxY: maxY + STROKE }
+})()
 
-export const NODES = [CENTER, ...SATELLITES]
-export const LINKS = SATELLITES.map((s) => ({ from: CENTER, to: s, halfWidth: LINK_HALF_WIDTH }))
-
-function insideCircle(x, y, c) {
-  return (x - c.x) ** 2 + (y - c.y) ** 2 <= c.r ** 2
+/** Квадрат расстояния от точки до осевой линии (по сегментам, без sqrt). */
+function distanceSq(x, y, points) {
+  let best = Infinity
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const a = points[i]
+    const b = points[i + 1]
+    const dx = b.x - a.x
+    const dy = b.y - a.y
+    const len2 = dx * dx + dy * dy
+    let t = len2 === 0 ? 0 : ((x - a.x) * dx + (y - a.y) * dy) / len2
+    if (t < 0) t = 0
+    else if (t > 1) t = 1
+    const px = x - (a.x + t * dx)
+    const py = y - (a.y + t * dy)
+    const d = px * px + py * py
+    if (d < best) best = d
+  }
+  return best
 }
 
-function distanceToSegment(px, py, a, b) {
-  const dx = b.x - a.x
-  const dy = b.y - a.y
-  const len2 = dx * dx + dy * dy
-  const t = len2 === 0 ? 0 : Math.min(1, Math.max(0, ((px - a.x) * dx + (py - a.y) * dy) / len2))
-  return Math.hypot(px - (a.x + t * dx), py - (a.y + t * dy))
-}
-
-function gradientColor(u, v) {
-  const t = Math.min(Math.max((u + v) / 2, 0), 1)
+/** Фон иконки: вертикальный графитовый градиент (u не используется — фон осесимметричный). */
+function gradientColor(_u, v) {
+  const t = Math.min(Math.max(v, 0), 1)
   return [
     Math.round(BG_FROM[0] + (BG_TO[0] - BG_FROM[0]) * t),
     Math.round(BG_FROM[1] + (BG_TO[1] - BG_FROM[1]) * t),
@@ -61,19 +94,14 @@ function gradientColor(u, v) {
 
 /**
  * Цвет знака в точке (u, v) ∈ [0,1] или null, если точка вне знака.
- * scale — множитель размера знака: 1 — натуральный, >1 — знак меньше
- * (safe zone для maskable-PWA и adaptive-иконок Android).
+ * scale — множитель размера знака: 1 — натуральный, >1 — знак крупнее
+ * (квадратные иконки), <1 — мельче (safe zone maskable-PWA и adaptive Android).
  */
 export function markColor(u, v, scale = 1) {
   const gx = (u - 0.5) / scale + 0.5
   const gy = (v - 0.5) / scale + 0.5
-
-  if (insideCircle(gx, gy, CENTER)) return ACCENT
-  for (const s of SATELLITES) if (insideCircle(gx, gy, s)) return NODE
-  for (const l of LINKS) {
-    if (distanceToSegment(gx, gy, l.from, l.to) <= l.halfWidth) return NODE
-  }
-  return null
+  if (gx < BOUNDS.minX || gx > BOUNDS.maxX || gy < BOUNDS.minY || gy > BOUNDS.maxY) return null
+  return distanceSq(gx, gy, STROKE_PATH) <= STROKE * STROKE ? ACCENT : null
 }
 
 function insideSquircle(u, v) {
@@ -85,6 +113,7 @@ function insideSquircle(u, v) {
  * Растровое изображение иконки в RGBA.
  * @param {number} size сторона квадрата в пикселях
  * @param {{ scale?: number, background?: 'gradient' | null, mask?: 'circle' | 'squircle' | null }} opts
+ *   scale > 1 — знак крупнее (квадратная иконка), scale < 1 — мельче (safe zone maskable/adaptive).
  */
 export function renderIcon(size, opts = {}) {
   const { scale = 1, background = 'gradient', mask = null } = opts
@@ -221,30 +250,24 @@ function hex(rgb) {
   return `#${rgb.map((c) => c.toString(16).padStart(2, '0')).join('')}`
 }
 
-export function iconSvg({ maskable = false } = {}) {
-  const scale = maskable ? 0.72 : 1
-  const X = (x) => (100 * ((x - 0.5) / scale + 0.5)).toFixed(2)
-  const Y = (y) => (100 * ((y - 0.5) / scale + 0.5)).toFixed(2)
-  const strokeWidth = ((2 * LINK_HALF_WIDTH * 100) / scale).toFixed(2)
-  const lines = SATELLITES.map(
-    (s) =>
-      `  <line x1="${X(CENTER.x)}" y1="${Y(CENTER.y)}" x2="${X(s.x)}" y2="${Y(s.y)}" stroke="${hex(NODE)}" stroke-width="${strokeWidth}" stroke-linecap="round"/>`,
-  ).join('\n')
-  const nodes = NODES.map(
-    (n, i) =>
-      `  <circle cx="${X(n.x)}" cy="${Y(n.y)}" r="${((n.r * 100) / scale).toFixed(2)}" fill="${i === 0 ? hex(ACCENT) : hex(NODE)}"/>`,
-  ).join('\n')
+export function iconSvg({ maskable = false, scale = 1 } = {}) {
+  const k = maskable ? 0.88 : scale
+  const X = (x) => (100 * ((x - 0.5) * k + 0.5)).toFixed(1)
+  const Y = (y) => (100 * ((y - 0.5) * k + 0.5)).toFixed(1)
+  const d = STROKE_PATH.filter((_, i) => i % 2 === 0 || i === STROKE_PATH.length - 1)
+    .map((p, i) => `${i === 0 ? 'M' : 'L'}${X(p.x)} ${Y(p.y)}`)
+    .join(' ')
+  const strokeWidth = (2 * STROKE * 100 * k).toFixed(1)
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" role="img" aria-label="${APP_NAME} — ${APP_TAGLINE}">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="${hex(BG_FROM)}"/>
       <stop offset="1" stop-color="${hex(BG_TO)}"/>
     </linearGradient>
   </defs>
-  <rect width="100" height="100" fill="url(#bg)"/>
-${lines}
-${nodes}
+  <rect width="100" height="100"${maskable ? '' : ' rx="22"'} fill="url(#bg)"/>
+  <path d="${d}" fill="none" stroke="${hex(ACCENT)}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
 `
 }

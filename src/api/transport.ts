@@ -38,7 +38,7 @@ export function resolveTransport(settings: Settings): ResolvedTransport {
 
   const base = settings.baseUrl.trim()
   if (!base) {
-    throw new Error('Не задан Base URL. Укажите его в Settings → API.')
+    throw new Error('Не задан Base URL. Укажите его в Настройки → Подключение.')
   }
   if (!settings.apiKey.trim()) {
     throw new Error(

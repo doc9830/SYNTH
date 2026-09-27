@@ -33,7 +33,8 @@ export async function syncStatusBar(dark: boolean): Promise<void> {
     const { StatusBar, Style } = await import('@capacitor/status-bar')
     // Style.Dark — светлые иконки (тёмная тема), Style.Light — тёмные иконки
     await StatusBar.setStyle({ style: dark ? Style.Dark : Style.Light })
-    await StatusBar.setBackgroundColor({ color: dark ? '#0b0d12' : '#ffffff' })
+    // цвет совпадает с фоном приложения (neutral-950) и meta theme-color
+    await StatusBar.setBackgroundColor({ color: dark ? '#0a0a0a' : '#ffffff' })
   } catch {
     // плагин недоступен — просто работаем без настройки статус-бара
   }

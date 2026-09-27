@@ -29,21 +29,21 @@ function CodeBlock({ language, code, children }: { language: string; code: strin
   }
 
   return (
-    <div className="group relative my-3 overflow-hidden rounded-xl border border-slate-700/60 bg-[#0f172a]">
-      <div className="flex items-center justify-between gap-2 border-b border-slate-700/60 px-3 py-1.5">
-        <span className="font-mono text-[11px] uppercase tracking-wide text-slate-400">
+    <div className="group relative my-3 overflow-hidden rounded-xl border border-neutral-700/60 bg-[#0f172a]">
+      <div className="flex items-center justify-between gap-2 border-b border-neutral-700/60 px-3 py-1.5">
+        <span className="font-mono text-[11px] uppercase tracking-wide text-neutral-400">
           {language || 'code'}
         </span>
         <button
           type="button"
           onClick={onCopy}
-          className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-slate-300 transition hover:bg-slate-700/60 hover:text-white"
+          className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-neutral-300 transition hover:bg-neutral-700/60 hover:text-white"
         >
           {copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
           {copied ? 'Скопировано' : 'Копировать'}
         </button>
       </div>
-      <pre className="chat-md !my-0 !rounded-none !bg-transparent !p-3 text-slate-100">
+      <pre className="chat-md !my-0 !rounded-none !bg-transparent !p-3 text-neutral-100">
         <code>{children}</code>
       </pre>
     </div>
@@ -93,7 +93,7 @@ const components: Components = {
       alt={alt ?? ''}
       title={title}
       loading="lazy"
-      className="my-2 max-h-[70vh] w-auto max-w-full rounded-xl border border-slate-300/60 dark:border-slate-700/60"
+      className="my-2 max-h-[70vh] w-auto max-w-full rounded-xl border border-neutral-300/60 dark:border-neutral-700/60"
     />
   ),
   table: ({ children }: TableProps) => (
@@ -116,7 +116,7 @@ interface MarkdownProps {
  */
 export const Markdown = memo(function Markdown({ content, className, compact }: MarkdownProps) {
   return (
-    <div className={cn('chat-md text-slate-800 dark:text-slate-100', compact && 'text-sm', className)}>
+    <div className={cn('chat-md text-neutral-800 dark:text-neutral-100', compact && 'text-sm', className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}

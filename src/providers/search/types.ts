@@ -29,7 +29,7 @@ export interface SearchQueryOptions {
 export function assertSearchKey(providerLabel: string, apiKey: string): void {
   if (!apiKey.trim()) {
     throw new Error(
-      `Провайдер поиска «${providerLabel}» требует API key. Укажите его в Settings → Web Search.`,
+      `Провайдер поиска «${providerLabel}» требует API key. Укажите его в Настройки → Поиск.`,
     )
   }
 }

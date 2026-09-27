@@ -102,7 +102,7 @@ async function generateViaImagesEndpoint(
       endpoint: transport.imagesUrl,
       hint:
         err.status === 404
-          ? 'Проверьте модель генерации изображений в настройках → «Изображения» (например, gpt-image-1) и Base URL с /v1.'
+          ? 'Проверьте модель генерации изображений в настройках → «Подключение» (например, gpt-image-1) и Base URL с /v1.'
           : err.hint,
       details: err.details,
     })

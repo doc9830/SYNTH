@@ -16,6 +16,12 @@ export interface ToolResult {
   sources?: SearchResult[]
   /** data URL'ы картинок для показа в сообщении */
   images?: string[]
+  /**
+   * Результат пришёл из внешнего источника (страница в интернете, чужой текст).
+   * Агент оборачивает такие результаты в рамку «внешние данные» — чтобы модель
+   * читала их как данные, а не как инструкции (см. lib/untrusted.ts).
+   */
+  untrusted?: boolean
 }
 
 export interface ToolContext {

@@ -1,4 +1,6 @@
 import { ApiError, errorFromResponse, networkError } from './errors'
+import { requestWithRetries, type RequestOptions } from './request'
+import type { RetryPolicy } from './retry'
 import { consumeChatStream, parseChatResponse, type StreamHandlers } from './sse'
 import type { AssistantTurn, WireChatRequest } from './types'
 
@@ -14,9 +16,22 @@ export interface OpenAiTransport {
   headers: Record<string, string>
 }
 
+/** Подмены для проверок (свой fetch, мгновенная пауза, свой журнал). */
+export type RequestDeps = Pick<RequestOptions, 'fetchImpl' | 'sleepImpl' | 'onRetry'>
+
 async function ensureOk(res: Response, endpoint: string): Promise<void> {
   if (res.ok) return
   throw await errorFromResponse(res, endpoint)
+}
+
+export interface StreamCallOptions {
+  signal: AbortSignal
+  handlers?: StreamHandlers
+  /** Повторы до старта потока: 429/5xx и обрыв сети (см. requestWithRetries) */
+  policy?: RetryPolicy
+  /** Молчание в потоке (мс), после которого ход обрывается; 0 — не следить */
+  idleTimeoutMs?: number
+  deps?: RequestDeps
 }
 
 /**
@@ -26,11 +41,11 @@ async function ensureOk(res: Response, endpoint: string): Promise<void> {
 export async function streamChatCompletion(
   transport: OpenAiTransport,
   body: WireChatRequest,
-  options: { signal: AbortSignal; handlers?: StreamHandlers },
+  options: StreamCallOptions,
 ): Promise<AssistantTurn> {
-  let res: Response
-  try {
-    res = await fetch(transport.chatUrl, {
+  const res = await requestWithRetries(
+    transport.chatUrl,
+    {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -38,35 +53,33 @@ export async function streamChatCompletion(
         ...transport.headers,
       },
       body: JSON.stringify(body),
-      signal: options.signal,
-    })
-  } catch (err) {
-    throw networkError(err, transport.chatUrl)
-  }
+    },
+    { ...options.deps, signal: options.signal, policy: options.policy },
+  )
 
-  await ensureOk(res, transport.chatUrl)
-  return consumeChatStream(res, options.handlers)
+  return consumeChatStream(res, options.handlers, { idleTimeoutMs: options.idleTimeoutMs })
 }
 
 /** Нестримовый вызов — нужен для вспомогательных задач (например, chat-image моделей). */
 export async function chatCompletion(
   transport: OpenAiTransport,
   body: WireChatRequest,
-  options: { signal?: AbortSignal } = {},
+  options: {
+    signal?: AbortSignal
+    policy?: RetryPolicy
+    deps?: RequestDeps
+  } = {},
 ): Promise<AssistantTurn> {
-  let res: Response
-  try {
-    res = await fetch(transport.chatUrl, {
+  const res = await requestWithRetries(
+    transport.chatUrl,
+    {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...transport.headers },
       body: JSON.stringify({ ...body, stream: false }),
-      signal: options.signal,
-    })
-  } catch (err) {
-    throw networkError(err, transport.chatUrl)
-  }
+    },
+    { ...options.deps, signal: options.signal, policy: options.policy },
+  )
 
-  await ensureOk(res, transport.chatUrl)
   const json = await res.json().catch(() => {
     throw new ApiError({ message: 'Ответ API не является JSON.', endpoint: transport.chatUrl })
   })

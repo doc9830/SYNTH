@@ -13,6 +13,7 @@ import {
   IconCopy,
   IconFileText,
   IconPencil,
+  IconPlay,
   IconRefresh,
   IconShare,
   IconTrash,
@@ -31,6 +32,8 @@ export interface MessageItemProps {
   showReasoning: boolean
   showToolActivity: boolean
   onRegenerate: () => void
+  /** Дописать оборванный ответ с того места, где он остановился */
+  onContinue: () => void
   onEdit: (messageId: string, text: string) => void
   onDelete: (messageId: string) => void
 }
@@ -61,6 +64,25 @@ function ActionButton({
       )}
     >
       {children}
+    </button>
+  )
+}
+
+/**
+ * «Продолжить» — заметная кнопка (не только по наведению): ответ оборвался
+ * (обрыв сети, таймаут тишины, остановка пользователем), но текст уже есть,
+ * и его можно дописать. Продолжение добавляется в то же сообщение.
+ */
+function ContinueButton({ disabled, onClick }: { disabled: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="mt-2 inline-flex items-center gap-1.5 rounded-xl border border-neutral-300 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-700 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700"
+    >
+      <IconPlay size={14} />
+      Продолжить
     </button>
   )
 }
@@ -255,6 +277,7 @@ function AssistantMessage({
   showReasoning,
   showToolActivity,
   onRegenerate,
+  onContinue,
   onDelete,
 }: MessageItemProps) {
   const toolCalls = message.toolCalls ?? []
@@ -266,6 +289,15 @@ function AssistantMessage({
   const phase = describeStreamPhase(message)
   /** Живая строка статуса — когда мыслей нет (или они скрыты), но работа идёт */
   const showStatus = streaming && (!reasoningText || !showReasoning) && !runningTool
+  /**
+   * Ответ оборвался (ошибка или остановка), но текст уже есть — его можно
+   * дописать. Для ошибки без текста продолжать нечего: там уместно «Заново».
+   */
+  const canContinue =
+    !streaming &&
+    !runningTool &&
+    Boolean(message.content.trim()) &&
+    (message.status === 'stopped' || message.status === 'error')
 
   return (
     <div className="group flex gap-3">
@@ -317,6 +349,8 @@ function AssistantMessage({
         {message.status === 'stopped' && (
           <div className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">Генерация остановлена</div>
         )}
+
+        {canContinue && <ContinueButton disabled={busy} onClick={onContinue} />}
 
         {(message.content || toolCalls.length > 0 || message.status !== 'streaming') && (
           <div className="mt-1 flex flex-wrap items-center gap-0.5 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">

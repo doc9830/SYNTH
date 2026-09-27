@@ -1,3 +1,5 @@
+import { parseRetryAfter } from './retry'
+
 /**
  * Ошибки OpenAI-совместимых API в человекочитаемом виде.
  * Коды разобраны по типовым ответам провайдеров: 401 / 402 / 403 / 404 / 429 / 5xx.
@@ -10,6 +12,8 @@ export interface ApiErrorInit {
   hint?: string
   details?: string
   code?: string
+  /** Сколько провайдер просил подождать до повтора (из Retry-After), мс */
+  retryAfterMs?: number
 }
 
 export class ApiError extends Error {
@@ -18,6 +22,7 @@ export class ApiError extends Error {
   readonly hint?: string
   readonly details?: string
   readonly code?: string
+  readonly retryAfterMs?: number
 
   constructor(init: ApiErrorInit) {
     super(init.message)
@@ -27,6 +32,7 @@ export class ApiError extends Error {
     this.hint = init.hint
     this.details = init.details
     this.code = init.code
+    this.retryAfterMs = init.retryAfterMs
   }
 }
 
@@ -141,6 +147,8 @@ export async function errorFromResponse(res: Response, endpoint: string): Promis
     hint: imageRejected ? IMAGE_REJECTED_HINT : known?.hint,
     code,
     details: typeof text === 'string' ? text.slice(0, 2000) : undefined,
+    // Провайдер может сам сказать, когда приходить снова (429 у OpenAI, шлюзы).
+    retryAfterMs: parseRetryAfter(res.headers.get('retry-after')),
   })
 }
 

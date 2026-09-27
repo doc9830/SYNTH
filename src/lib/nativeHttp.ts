@@ -84,7 +84,17 @@ async function nativeRequest(
   const text = typeof raw === 'string' ? raw : raw == null ? '' : JSON.stringify(raw)
   const out = new Headers()
   for (const [k, v] of Object.entries(res.headers ?? {})) out.set(k, String(v))
-  return new Response(text, { status: res.status, headers: out })
+  const response = new Response(text, { status: res.status, headers: out })
+  // В WebView Response.url всегда пустой, хотя нативный слой знает итоговый адрес
+  // (после редиректов). Подставляем его: на него опирается проверка SSRF и
+  // определение finalUrl у прочитанной страницы.
+  const finalUrl = typeof res.url === 'string' && res.url ? res.url : url
+  try {
+    Object.defineProperty(response, 'url', { value: finalUrl, configurable: true })
+  } catch {
+    /* среда не даёт переопределить — вызывающий код возьмёт адрес запроса */
+  }
+  return response
 }
 
 /**

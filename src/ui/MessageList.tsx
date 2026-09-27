@@ -44,6 +44,8 @@ interface MessageListProps {
   loading: boolean
   busy: boolean
   onRegenerate: () => void
+  /** Дописать оборванный ответ ассистента */
+  onContinue: () => void
   onEdit: (messageId: string, text: string) => void
   onDelete: (messageId: string) => void
   onSuggestion: (text: string) => void
@@ -56,6 +58,7 @@ export function MessageList({
   loading,
   busy,
   onRegenerate,
+  onContinue,
   onEdit,
   onDelete,
   onSuggestion,
@@ -180,6 +183,7 @@ export function MessageList({
               showReasoning={showReasoning}
               showToolActivity={showToolActivity}
               onRegenerate={onRegenerate}
+              onContinue={onContinue}
               onEdit={onEdit}
               onDelete={onDelete}
             />

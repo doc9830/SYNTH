@@ -1,4 +1,6 @@
+import { lookup as dnsLookup } from 'node:dns/promises'
 import { findChrome, withChromePage } from './chrome'
+import { assertPublicUrl } from '../src/lib/netGuard'
 import { capText, normalizeUrl, readStaticPage, type PageImage, type PageLink } from '../src/lib/pageStatic'
 
 // Статический разбор HTML живёт в src/lib/pageStatic.ts: этот же код
@@ -11,6 +13,18 @@ export {
   type PageImage,
   type PageLink,
 } from '../src/lib/pageStatic'
+
+export { NetGuardError } from '../src/lib/netGuard'
+
+/**
+ * Резолвер для SSRF-проверки на backend: системный DNS.
+ * Приложение в браузере спрашивает адреса через DNS-over-HTTPS (в WebView
+ * обычного DNS нет), а серверу достаточно штатного node:dns.
+ */
+async function resolveHostIps(host: string): Promise<string[]> {
+  const records = await dnsLookup(host, { all: true, verbatim: true })
+  return records.map((record) => record.address)
+}
 
 /**
  * Чтение страницы по ссылке.
@@ -180,6 +194,10 @@ async function renderWithChrome(
     async (page) => {
       await page.navigate(url, { waitMs, timeoutMs: Math.max(4000, timeoutMs - 6000) })
       const data = await page.evaluate<Extracted>(EXTRACT_SCRIPT)
+      // Chrome идёт по редиректам сам (в том числе на localhost): проверяем,
+      // куда в итоге попали, прежде чем отдать содержимое наружу.
+      const finalUrl = data.finalUrl || url
+      if (finalUrl !== url) await assertPublicUrl(finalUrl, { lookup: resolveHostIps })
       const { text, truncated } = capText(data.text ?? '', ctx.maxChars)
 
       let screenshot: PageScreenshot | undefined
@@ -214,7 +232,7 @@ async function renderWithChrome(
 
       return {
         url,
-        finalUrl: data.finalUrl || url,
+        finalUrl,
         status: 200,
         kind: 'html' as const,
         engine: 'chrome' as const,
@@ -246,6 +264,8 @@ async function readStatic(
     maxBytes: 3_000_000,
     maxChars: ctx.maxChars,
     signal: input.signal,
+    // Проверка адреса и редиректов — системным DNS (SSRF).
+    lookup: resolveHostIps,
   })
 
   return {
@@ -259,6 +279,9 @@ async function readStatic(
  */
 export async function readPage(input: ReadPageInput): Promise<PageData> {
   const url = normalizeUrl(input.url)
+  // SSRF: до запуска Chrome и до статического запроса проверяем, что адрес
+  // публичный. Дальше каждый редирект в статическом режиме проверяется отдельно.
+  await assertPublicUrl(url, { lookup: resolveHostIps })
   const maxChars = clamp(input.maxChars ?? 8000, 500, 40000)
   const screenshot = input.screenshot !== false && Boolean(findChrome())
   const warnings: string[] = []

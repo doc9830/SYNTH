@@ -34,6 +34,7 @@ function emptyState(): BlockState {
 export async function consumeAnthropicStream(
   body: ReadableStream<Uint8Array>,
   handlers?: StreamHandlers,
+  options: { idleTimeoutMs?: number } = {},
 ): Promise<AssistantTurn> {
   const blocks = new Map<number, BlockState>()
   let content = ''
@@ -50,7 +51,7 @@ export async function consumeAnthropicStream(
     return fresh
   }
 
-  for await (const event of iterateSse(body)) {
+  for await (const event of iterateSse(body, { idleTimeoutMs: options.idleTimeoutMs })) {
     if (!event.data || event.data === '[DONE]') continue
 
     let payload: AnthropicStreamEvent

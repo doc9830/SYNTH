@@ -113,6 +113,16 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
   const memoryEntries = useMemory((s) => s.entries)
   const memoryInfo = useMemo(() => memoryStats(memoryEntries), [memoryEntries])
 
+  /**
+   * Сколько правок тела запроса приложение выучило для подключений
+   * (например, «убрать stream_options» для llama.cpp). 0 — ни разу не понадобилось.
+   */
+  const learnedFixes = useMemo(
+    () =>
+      Object.values(settings.network.bodyFixes).reduce((total, fixes) => total + fixes.length, 0),
+    [settings.network.bodyFixes],
+  )
+
   const readiness = useMemo(() => getReadiness(settings), [settings])
 
   // Что эвристика думает про картинки у выбранной модели — показываем прямо
@@ -787,6 +797,61 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
                       {memoryInfo.chars} симв. Просмотр, экспорт и очистка — в меню «⋮» → «Память».
                     </p>
                   </>
+                )}
+              </div>
+
+              <div className="space-y-4 rounded-2xl border border-neutral-200 p-3 dark:border-neutral-800">
+                <div>
+                  <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                    Надёжность сети
+                  </p>
+                  <p className="mt-0.5 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-400">
+                    Что делать, когда провайдер отвечает «слишком много запросов» (429), ошибкой 5xx
+                    или просто замолкает на середине ответа. Работает одинаково для
+                    OpenAI-совместимых серверов и для Claude.
+                  </p>
+                </div>
+
+                <Field
+                  label={`Повторы при 429 и 5xx: ${settings.network.maxAttempts}`}
+                  hint="Сколько всего раз приложение отправит запрос, прежде чем показать ошибку. Повторы идут только до первого токена — начатый ответ не перезапускается. Если провайдер прислал Retry-After, пауза берётся из него."
+                >
+                  <input
+                    type="range"
+                    min={1}
+                    max={5}
+                    step={1}
+                    value={settings.network.maxAttempts}
+                    onChange={(e) =>
+                      updateSection('network', { maxAttempts: Number(e.target.value) })
+                    }
+                    className="w-full accent-neutral-900 dark:accent-neutral-300"
+                  />
+                </Field>
+
+                <Field
+                  label={`Обрыв при тишине: ${settings.network.idleTimeoutSec} с`}
+                  hint="Если в потоке ответа долго нет новых данных, ход прерывается: уже полученный текст сохраняется, а рядом появляется кнопка «Продолжить». 0 — ждать сколько угодно."
+                >
+                  <input
+                    type="range"
+                    min={0}
+                    max={180}
+                    step={5}
+                    value={settings.network.idleTimeoutSec}
+                    onChange={(e) =>
+                      updateSection('network', { idleTimeoutSec: Number(e.target.value) })
+                    }
+                    className="w-full accent-neutral-900 dark:accent-neutral-300"
+                  />
+                </Field>
+
+                {learnedFixes > 0 && (
+                  <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                    Запомнено правок запроса: {learnedFixes}. Провайдер один раз пожаловался на поле
+                    (например, на <code className="rounded bg-neutral-100 px-1 dark:bg-neutral-800">stream_options</code>),
+                    и приложение больше его не отправляет — для этого подключения и модели.
+                  </p>
                 )}
               </div>
             </>

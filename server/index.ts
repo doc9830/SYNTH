@@ -4,7 +4,7 @@ import cors from 'cors'
 import express, { type NextFunction, type Request, type Response as ExpressResponse } from 'express'
 import { createSearchProvider } from '../src/providers/search'
 import { findChrome } from './chrome'
-import { PageInputError, readPage } from './reader'
+import { NetGuardError, PageInputError, readPage } from './reader'
 
 /**
  * Локальный backend-proxy для OpenAI-совместимых API.
@@ -310,7 +310,9 @@ app.post('/api/page', async (req, res) => {
     res.json({ page })
   } catch (err) {
     if (controller.signal.aborted) return res.end()
-    if (err instanceof PageInputError) return fail(res, 400, err.message)
+    if (err instanceof PageInputError || err instanceof NetGuardError) {
+      return fail(res, 400, err.message)
+    }
     fail(res, 502, err instanceof Error ? err.message : String(err))
   }
 })

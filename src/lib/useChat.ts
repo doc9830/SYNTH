@@ -1,12 +1,20 @@
 import { useCallback, useRef, useState } from 'react'
 import type { ChatMessage, ImageAttachment } from '@/types'
-import { runAgent } from './agent'
+import {
+  continuationModeFor,
+  rememberContinuationMode,
+  runAgent,
+  shouldFallbackToNudge,
+  type AgentCallbacks,
+  type ContinuationMode,
+} from './agent'
 import { persistStreamSnapshot, useConversations } from './conversations'
 import { autoExtractMemories, parseRememberCommand, remember, shouldExtract } from './memory'
 import { getSettings, type Settings } from './settings'
 import { clearStreamDraft, publishStreamDraft } from './streamDraft'
 import { notify } from './toast'
 import { uid } from './utils'
+import { debugLog } from './debug'
 
 interface AssistantDraft {
   content: string
@@ -21,8 +29,8 @@ interface AssistantDraft {
   errorDetails?: string
 }
 
-function newDraft(): AssistantDraft {
-  return { content: '', reasoning: '', toolCalls: [], status: 'streaming' }
+function newDraft(content = ''): AssistantDraft {
+  return { content, reasoning: '', toolCalls: [], status: 'streaming' }
 }
 
 function emptyAssistant(id: string): ChatMessage {
@@ -160,42 +168,88 @@ export function useChat() {
   }, [])
 
   const runTurn = useCallback(
-    async (conversationId: string, history: ChatMessage[], assistantId: string) => {
+    async (
+      conversationId: string,
+      history: ChatMessage[],
+      assistantId: string,
+      options: { prefix?: string } = {},
+    ) => {
       const settings: Settings = getSettings()
       const controller = new AbortController()
       abortRef.current = controller
-      draftRef.current = newDraft()
+      // Продолжение оборванного ответа: черновик начинается с уже показанного
+      // текста — новый текст приклеится к нему, сообщение остаётся тем же.
+      const prefix = options.prefix ?? ''
+      draftRef.current = newDraft(prefix)
       reasoningMsRef.current = 0
       reasoningStartedRef.current = null
       snapshotAtRef.current = 0
       setIsStreaming(true)
 
-      const result = await runAgent({
+      const callbacks: AgentCallbacks = {
+        onDelta: (t) => {
+          closeThinking()
+          appendDraft('content', t)
+          patchAssistant(conversationId, assistantId, { reasoningMs: reasoningMsRef.current })
+        },
+        onReasoning: (t) => {
+          if (reasoningStartedRef.current === null) reasoningStartedRef.current = Date.now()
+          appendDraft('reasoning', t)
+          patchAssistant(conversationId, assistantId, {})
+        },
+        onTools: (records) => {
+          closeThinking()
+          patchAssistant(conversationId, assistantId, {
+            toolCalls: records,
+            reasoningMs: reasoningMsRef.current,
+          })
+        },
+        onModel: (m) => patchAssistant(conversationId, assistantId, { model: m }),
+        onUsage: (u) => patchAssistant(conversationId, assistantId, { usage: u }),
+      }
+
+      let mode: ContinuationMode | undefined = prefix ? continuationModeFor(settings) : undefined
+      let result = await runAgent({
         history,
         settings,
         signal: controller.signal,
-        callbacks: {
-          onDelta: (t) => {
-            closeThinking()
-            appendDraft('content', t)
-            patchAssistant(conversationId, assistantId, { reasoningMs: reasoningMsRef.current })
-          },
-          onReasoning: (t) => {
-            if (reasoningStartedRef.current === null) reasoningStartedRef.current = Date.now()
-            appendDraft('reasoning', t)
-            patchAssistant(conversationId, assistantId, {})
-          },
-          onTools: (records) => {
-            closeThinking()
-            patchAssistant(conversationId, assistantId, {
-              toolCalls: records,
-              reasoningMs: reasoningMsRef.current,
-            })
-          },
-          onModel: (m) => patchAssistant(conversationId, assistantId, { model: m }),
-          onUsage: (u) => patchAssistant(conversationId, assistantId, { usage: u }),
-        },
+        callbacks,
+        assistantPrefix: prefix || undefined,
+        continuationMode: mode,
       })
+
+      // Сервер не принял сообщение ассистента последним (400 «должно быть
+      // чередование ролей»)? Тогда повторяем ход с просьбой продолжить.
+      // Повтор безопасен, только если модель ещё ничего не написала —
+      // это проверяет shouldFallbackToNudge.
+      if (
+        result.error &&
+        shouldFallbackToNudge({
+          hasPrefix: Boolean(prefix),
+          mode: mode ?? 'prefix',
+          apiError: result.error,
+          content: result.content,
+          records: result.toolCalls,
+          signal: controller.signal,
+        })
+      ) {
+        mode = 'nudge'
+        rememberContinuationMode(settings, mode)
+        debugLog(
+          'info',
+          'Продолжение ответа: сервер не принял префикс ассистента — повторяю с просьбой',
+          [result.error.message],
+        )
+        draftRef.current = newDraft(prefix)
+        result = await runAgent({
+          history,
+          settings,
+          signal: controller.signal,
+          callbacks,
+          assistantPrefix: prefix,
+          continuationMode: mode,
+        })
+      }
 
       cancelPendingFlush()
 
@@ -207,7 +261,9 @@ export function useChat() {
 
       closeThinking()
       const draft: AssistantDraft = {
-        content: result.content,
+        // Продолжение приклеиваем к исходному тексту: пользователь видит один
+        // цельный ответ, а не «часть 1» и «часть 2».
+        content: prefix + result.content,
         reasoning: result.reasoning,
         reasoningMs: reasoningMsRef.current || undefined,
         toolCalls: result.toolCalls,
@@ -337,6 +393,36 @@ export function useChat() {
     await runTurn(store.activeId, history, assistantMessage.id)
   }, [isStreaming, runTurn])
 
+  /**
+   * Дописать оборванный ответ (обрыв сети, таймаут тишины, остановка).
+   *
+   * Продолжаем то же сообщение ассистента: уже написанный текст уходит модели
+   * как начало ответа, новый текст дописывается в конец — история не растёт
+   * лишними сообщениями, а «источник» в чате остаётся один.
+   */
+  const continueAnswer = useCallback(async () => {
+    if (isStreaming) return
+    const store = useConversations.getState()
+    const conversationId = store.activeId
+    if (!conversationId) return
+    const messages = await store.ensureMessages(conversationId)
+
+    const last = messages[messages.length - 1]
+    if (!last || last.role !== 'assistant' || !last.content.trim()) return
+
+    const history = messages.slice(0, -1)
+    // Снимаем прежний статус ошибки: ход продолжается, сообщение снова «в работе».
+    store.setMessages(
+      conversationId,
+      [
+        ...history,
+        { ...last, status: 'streaming', error: undefined, errorDetails: undefined },
+      ],
+      false,
+    )
+    await runTurn(conversationId, history, last.id, { prefix: last.content })
+  }, [isStreaming, runTurn])
+
   /** Изменить текст сообщения пользователя и перезапустить ответ. */
   const editAndResend = useCallback(
     async (messageId: string, newText: string) => {
@@ -364,6 +450,6 @@ export function useChat() {
     if (store.activeId) store.removeMessage(store.activeId, messageId)
   }, [])
 
-  return { send, stop, regenerate, editAndResend, removeMessage, isStreaming }
+  return { send, stop, regenerate, continueAnswer, editAndResend, removeMessage, isStreaming }
 }
 

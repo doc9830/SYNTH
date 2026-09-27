@@ -20,9 +20,49 @@ interface SseEvent {
 
 const DONE = '[DONE]'
 
+/** Код ошибки в ApiError, когда поток замолчал (виден в UI и проверках). */
+export const IDLE_TIMEOUT_CODE = 'idle-timeout'
+
+/** Сообщение о тишине в потоке: понятное пользователю, без стектрейсов. */
+export const IDLE_TIMEOUT_MESSAGE =
+  'Провайдер перестал присылать ответ — поток молчит слишком долго. Уже полученная часть ответа сохранена, ответ можно продолжить.'
+
+/**
+ * Читает очередной кусок потока, но не бесконечно: если провайдер замолчал на
+ * idleTimeoutMs, чтение прерывается ошибкой. Без этого «зависший» запрос
+ * (мобильная сеть ушла в тень, шлюз не отвечает) висел бы до бесконечности.
+ */
+async function readWithIdleTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  idleTimeoutMs: number,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  if (!(idleTimeoutMs > 0)) return reader.read()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const idle = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new ApiError({ message: IDLE_TIMEOUT_MESSAGE, code: IDLE_TIMEOUT_CODE }))
+    }, idleTimeoutMs)
+  })
+  try {
+    return await Promise.race([reader.read(), idle])
+  } catch (err) {
+    if (err instanceof ApiError && err.code === IDLE_TIMEOUT_CODE) {
+      // Освобождаем соединение, иначе fetch продолжит ждать ответ в фоне.
+      await reader.cancel().catch(() => undefined)
+    }
+    throw err
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 /** Итератор по SSE-событиям из потока fetch-ответа. */
-export async function* iterateSse(body: ReadableStream<Uint8Array>): AsyncGenerator<SseEvent> {
+export async function* iterateSse(
+  body: ReadableStream<Uint8Array>,
+  options: { idleTimeoutMs?: number } = {},
+): AsyncGenerator<SseEvent> {
   const reader = body.getReader()
+  const idleTimeoutMs = options.idleTimeoutMs ?? 0
   const decoder = new TextDecoder('utf-8')
   let buffer = ''
   let currentEvent: string | undefined
@@ -45,7 +85,7 @@ export async function* iterateSse(body: ReadableStream<Uint8Array>): AsyncGenera
 
   try {
     for (;;) {
-      const { done, value } = await reader.read()
+      const { done, value } = await readWithIdleTimeout(reader, idleTimeoutMs)
       if (done) break
       buffer += decoder.decode(value, { stream: true })
       let idx = buffer.indexOf('\n')
@@ -129,10 +169,15 @@ function normalizeUsage(usage: WireUsage | undefined): WireUsage | undefined {
 /**
  * Читает SSE-поток chat/completions и возвращает собранный ответ модели:
  * текст, reasoning, tool_calls, finish_reason и usage.
+ *
+ * idleTimeoutMs — сколько молчания в потоке считаем обрывом (0 — ждать сколько
+ * угодно). Всё, что успело прийти до обрыва, остаётся в собранном ответе: ход
+ * не теряет частичный текст, а пользователь может продолжить ответ.
  */
 export async function consumeChatStream(
   response: Response,
   handlers: StreamHandlers = {},
+  options: { idleTimeoutMs?: number } = {},
 ): Promise<AssistantTurn> {
   if (!response.body) {
     throw new ApiError({ message: 'Пустой ответ от API (нет тела потока).' })
@@ -145,7 +190,7 @@ export async function consumeChatStream(
   let usage: WireUsage | undefined
   let model: string | undefined
 
-  for await (const event of iterateSse(response.body)) {
+  for await (const event of iterateSse(response.body, { idleTimeoutMs: options.idleTimeoutMs })) {
     if (event.data === DONE) break
     if (!event.data) continue
 

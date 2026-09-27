@@ -1,5 +1,8 @@
+export * from './bodyCompat'
 export * from './client'
 export * from './errors'
 export * from './images'
+export * from './request'
+export * from './retry'
 export * from './sse'
 export type * from './types'

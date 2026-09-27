@@ -1,15 +1,24 @@
 import type { ChatMessage, PageReadResult, SearchResult } from '@/types'
-import type { Settings } from '@/lib/settings'
+import { bodyFixesFor, rememberBodyFixes, type Settings } from '@/lib/settings'
+import { debugLog } from '@/lib/debug'
 import { nativeHttpAvailable } from '@/lib/nativeHttp'
+import { assertPublicUrl, NetGuardError } from '@/lib/netGuard'
 import { normalizeUrl, readStaticPage } from '@/lib/pageStatic'
 import {
   ApiError,
+  applyBodyFixes,
+  bodyProfileKey,
+  describeBodyFix,
   errorFromResponse,
+  MAX_BODY_FIX_ATTEMPTS,
+  nextBodyFix,
+  rejectedFieldsFromError,
   streamChatCompletion,
   type OpenAiTransport,
+  type RetryPolicy,
   type StreamHandlers,
 } from '@/providers/openai'
-import type { AssistantTurn, WireMessage, WireTool } from '@/providers/openai/types'
+import type { AssistantTurn, WireChatRequest, WireMessage, WireTool } from '@/providers/openai/types'
 import type { ModelInfo } from '@/providers/openai/client'
 import { createSearchProvider } from '@/providers/search'
 import {
@@ -49,13 +58,9 @@ function resolve(settings: Settings, kind: TransportKind = 'chat'): ResolvedTran
   }
 }
 
-/** Один проход модели (со streaming). */
-export async function chatTurn(
-  settings: Settings,
-  req: ChatTurnRequest,
-): Promise<AssistantTurn> {
-  const resolved = resolve(settings)
-  const body = {
+/** Тело запроса chat/completions по настройкам приложения. */
+function buildTurnBody(settings: Settings, req: ChatTurnRequest): WireChatRequest {
+  return {
     model: settings.model,
     messages: req.messages,
     stream: req.stream !== false,
@@ -64,6 +69,57 @@ export async function chatTurn(
     max_tokens: req.maxTokens ?? settings.maxTokens ?? undefined,
     stream_options: { include_usage: true },
   }
+}
+
+/**
+ * Запрос с «докруткой» тела: если провайдер ответил 400/422 на известное поле
+ * (stream_options, max_tokens, temperature, tool_choice), запрос повторяется
+ * с исправленным телом, а решение запоминается для этого подключения.
+ *
+ * Так закрывается самая частая несовместимость: llama.cpp не знает
+ * stream_options, а новые модели OpenAI требуют max_completion_tokens вместо
+ * max_tokens. Пользователь видит обычный ответ — без разбора JSON-ошибок.
+ * Если поле незнакомое, ошибка уходит наверх как есть (с телом ответа).
+ */
+async function withBodyRecovery(
+  settings: Settings,
+  body: WireChatRequest,
+  call: (body: WireChatRequest) => Promise<AssistantTurn>,
+): Promise<AssistantTurn> {
+  const profile = bodyProfileKey(settings)
+  const learned = bodyFixesFor(settings, profile)
+  let current = applyBodyFixes(body, learned)
+  let applied = [...learned]
+
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await call(current)
+    } catch (err) {
+      if (!(err instanceof ApiError) || attempt >= MAX_BODY_FIX_ATTEMPTS) throw err
+      const rejected = rejectedFieldsFromError(err)
+      if (!rejected.length) throw err
+      const fix = nextBodyFix(rejected, applied)
+      if (!fix) throw err // поле уже правили, а провайдер всё равно недоволен
+      applied = [...applied, fix]
+      current = applyBodyFixes(current, [fix])
+      rememberBodyFixes(profile, applied)
+      debugLog('info', 'Провайдер отклонил поле запроса — повтор с исправленным телом', [
+        describeBodyFix(fix),
+        `профиль: ${profile}`,
+      ])
+    }
+  }
+}
+
+/** Один проход модели (со streaming). */
+export async function chatTurn(
+  settings: Settings,
+  req: ChatTurnRequest,
+): Promise<AssistantTurn> {
+  const resolved = resolve(settings)
+  const body = buildTurnBody(settings, req)
+  const policy: RetryPolicy = { maxAttempts: settings.network.maxAttempts }
+  const idleTimeoutMs = settings.network.idleTimeoutSec * 1000
 
   // Тип подключения «Anthropic (Claude)»: тело запроса и поток переводит
   // providers/anthropic, наружу — тот же AssistantTurn. Поэтому agent loop,
@@ -73,13 +129,19 @@ export async function chatTurn(
     return streamAnthropicMessages(toAnthropicTransport(resolved), body, {
       signal: req.signal,
       handlers: req.handlers,
+      policy,
+      idleTimeoutMs,
     })
   }
 
-  return streamChatCompletion(toOpenAiTransport(resolved), body, {
-    signal: req.signal,
-    handlers: req.handlers,
-  })
+  return withBodyRecovery(settings, body, (patched) =>
+    streamChatCompletion(toOpenAiTransport(resolved), patched, {
+      signal: req.signal,
+      handlers: req.handlers,
+      policy,
+      idleTimeoutMs,
+    }),
+  )
 }
 
 /** Список моделей: GET /v1/models (или /api/models в proxy-режиме). */
@@ -125,24 +187,30 @@ export async function chatOnce(
   input: { messages: WireMessages; maxTokens?: number; temperature?: number; signal?: AbortSignal },
 ): Promise<string> {
   const resolved = resolve(settings)
-  const body = {
+  const body: WireChatRequest = {
     model: settings.model,
     messages: input.messages,
     stream: false,
     temperature: input.temperature ?? 0,
     max_tokens: input.maxTokens,
   }
+  const policy: RetryPolicy = { maxAttempts: settings.network.maxAttempts }
 
   if (settings.protocol === 'anthropic') {
     const { anthropicMessages } = await import('@/providers/anthropic/client')
     const turn = await anthropicMessages(toAnthropicTransport(resolved), body, {
       signal: input.signal,
+      policy,
     })
     return turn.content
   }
 
   const { chatCompletion } = await import('@/providers/openai/client')
-  const turn = await chatCompletion(toOpenAiTransport(resolved), body, { signal: input.signal })
+  // Служебные запросы (память) падают так же, как чат: та же «докрутка» тела,
+  // иначе извлечение фактов тихо ломается на моделях без temperature/max_tokens.
+  const turn = await withBodyRecovery(settings, body, (patched) =>
+    chatCompletion(toOpenAiTransport(resolved), patched, { signal: input.signal, policy }),
+  )
   return turn.content
 }
 
@@ -321,6 +389,21 @@ export async function readPage(
   settings: Settings,
   opts: { screenshot?: boolean; fullPage?: boolean; maxChars?: number; signal?: AbortSignal } = {},
 ): Promise<PageReadResult> {
+  // SSRF-проверка до запроса: и локальное чтение, и внешний backend ходят
+  // только на публичные адреса. В backend проверка тоже есть — это второй слой,
+  // чтобы ссылка на localhost вообще не уходила с устройства.
+  try {
+    await assertPublicUrl(normalizeUrl(url))
+  } catch (err) {
+    throw new ApiError({
+      message: err instanceof Error ? err.message : String(err),
+      hint:
+        err instanceof NetGuardError
+          ? 'Локальные адреса и адреса устройств в сети не читаются: откройте публичную ссылку в интернете.'
+          : 'Проверьте ссылку: нужен адрес вида https://example.com/page.',
+    })
+  }
+
   // Автономный режим (APK без внешнего backend): читаем страницу прямо в приложении.
   if (nativeHttpAvailable() && settings.mode === 'direct' && !settings.search.backendUrl.trim()) {
     return readLocalPage(url, opts)

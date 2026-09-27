@@ -1,4 +1,7 @@
-import { ApiError, errorFromResponse, networkError } from '@/providers/openai/errors'
+import { ApiError } from '@/providers/openai/errors'
+import type { RequestDeps } from '@/providers/openai/client'
+import { requestWithRetries } from '@/providers/openai/request'
+import type { RetryPolicy } from '@/providers/openai/retry'
 import type { StreamHandlers } from '@/providers/openai/sse'
 import type { AssistantTurn, WireChatRequest } from '@/providers/openai/types'
 import { consumeAnthropicStream } from './stream'
@@ -28,13 +31,19 @@ export interface AnthropicTransport {
 export async function streamAnthropicMessages(
   transport: AnthropicTransport,
   body: WireChatRequest,
-  options: { signal: AbortSignal; handlers?: StreamHandlers },
+  options: {
+    signal: AbortSignal
+    handlers?: StreamHandlers
+    policy?: RetryPolicy
+    idleTimeoutMs?: number
+    deps?: RequestDeps
+  },
 ): Promise<AssistantTurn> {
   const payload = toAnthropicRequest({ ...body, stream: true })
 
-  let res: Response
-  try {
-    res = await fetch(transport.messagesUrl, {
+  const res = await requestWithRetries(
+    transport.messagesUrl,
+    {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -42,13 +51,10 @@ export async function streamAnthropicMessages(
         ...transport.headers,
       },
       body: JSON.stringify(payload),
-      signal: options.signal,
-    })
-  } catch (err) {
-    throw networkError(err, transport.messagesUrl)
-  }
+    },
+    { ...options.deps, signal: options.signal, policy: options.policy },
+  )
 
-  if (!res.ok) throw await errorFromResponse(res, transport.messagesUrl)
   if (!res.body) {
     throw new ApiError({
       message: 'Anthropic вернул пустой поток ответа.',
@@ -56,30 +62,29 @@ export async function streamAnthropicMessages(
     })
   }
 
-  return consumeAnthropicStream(res.body, options.handlers)
+  return consumeAnthropicStream(res.body, options.handlers, {
+    idleTimeoutMs: options.idleTimeoutMs,
+  })
 }
 
 /** Нестримовый вызов — служебные задачи интерфейса (память, проверки). */
 export async function anthropicMessages(
   transport: AnthropicTransport,
   body: WireChatRequest,
-  options: { signal?: AbortSignal } = {},
+  options: { signal?: AbortSignal; policy?: RetryPolicy; deps?: RequestDeps } = {},
 ): Promise<AssistantTurn> {
   const payload = toAnthropicRequest({ ...body, stream: false })
 
-  let res: Response
-  try {
-    res = await fetch(transport.messagesUrl, {
+  const res = await requestWithRetries(
+    transport.messagesUrl,
+    {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...transport.headers },
       body: JSON.stringify(payload),
-      signal: options.signal,
-    })
-  } catch (err) {
-    throw networkError(err, transport.messagesUrl)
-  }
+    },
+    { ...options.deps, signal: options.signal, policy: options.policy },
+  )
 
-  if (!res.ok) throw await errorFromResponse(res, transport.messagesUrl)
   const json = await res.json().catch(() => {
     throw new ApiError({
       message: 'Ответ Anthropic не является JSON.',
@@ -94,18 +99,11 @@ export async function fetchAnthropicModels(
   transport: AnthropicTransport,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  let res: Response
-  try {
-    res = await fetch(transport.modelsUrl, {
-      method: 'GET',
-      headers: { Accept: 'application/json', ...transport.headers },
-      signal,
-    })
-  } catch (err) {
-    throw networkError(err, transport.modelsUrl)
-  }
-
-  if (!res.ok) throw await errorFromResponse(res, transport.modelsUrl)
+  const res = await requestWithRetries(
+    transport.modelsUrl,
+    { method: 'GET', headers: { Accept: 'application/json', ...transport.headers } },
+    { signal },
+  )
   const json = (await res.json()) as { data?: Array<{ id?: string }> }
   const seen = new Set<string>()
   const ids: string[] = []

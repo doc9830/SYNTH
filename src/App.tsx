@@ -39,7 +39,8 @@ export default function App() {
   /** Сообщения открытого чата читаются лениво: до загрузки их просто нет */
   const messages = useConversationMessages(conversation?.id)
   const messagesLoading = useMessagesLoading(conversation?.id)
-  const { send, stop, regenerate, editAndResend, removeMessage, isStreaming } = useChat()
+  const { send, stop, regenerate, continueAnswer, editAndResend, removeMessage, isStreaming } =
+    useChat()
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -184,6 +185,7 @@ export default function App() {
             loading={messagesLoading}
             busy={isStreaming}
             onRegenerate={() => void regenerate()}
+            onContinue={() => void continueAnswer()}
             onEdit={(messageId, text) => void editAndResend(messageId, text)}
             onDelete={removeMessage}
             onSuggestion={handleSuggestion}

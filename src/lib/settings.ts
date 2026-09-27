@@ -105,6 +105,25 @@ export interface InterfaceSettings {
   sendOnEnter: boolean
 }
 
+/**
+ * Надёжность сети: сколько ждать ответа и сколько раз повторять запрос.
+ * Настройки общие для всех провайдеров — они про поведение приложения,
+ * а не про конкретное API.
+ */
+export interface NetworkSettings {
+  /** Тишина в потоке ответа, после которой ход обрывается, секунды (0 — не следить) */
+  idleTimeoutSec: number
+  /** Всего попыток запроса при 429/5xx и обрыве сети (1 — без повторов) */
+  maxAttempts: number
+  /**
+   * Выученные правки тела запроса: профиль подключения → список правок
+   * (`drop:stream_options`, `rename:max_tokens:max_completion_tokens`, …).
+   * Заполняется автоматически, когда провайдер отвечает 400 на поле.
+   * Ключ профиля — providerId|baseUrl|model (см. bodyProfileKey).
+   */
+  bodyFixes: Record<string, string[]>
+}
+
 export interface Settings {
   mode: ConnectionMode
   /**
@@ -144,6 +163,7 @@ export interface Settings {
   tools: ExtraToolsSettings
   memory: MemorySettings
   ui: InterfaceSettings
+  network: NetworkSettings
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -210,6 +230,14 @@ export const DEFAULT_SETTINGS: Settings = {
     showToolActivity: true,
     sendOnEnter: true,
   },
+  network: {
+    // Минута тишины: длинные «размышления» моделей не рвём, но и вечное
+    // ожидание не держим — на обрыв пользователь получает частичный текст.
+    idleTimeoutSec: 60,
+    // 429 и 5xx провайдеры отдают регулярно; три попытки закрывают типовой случай.
+    maxAttempts: 3,
+    bodyFixes: {},
+  },
 }
 
 /**
@@ -255,10 +283,42 @@ export const VISION_INPUT_LABELS: Record<VisionInputMode, string> = {
   off: 'Нет',
 }
 
+/** Приводит «тишину в потоке» к секундам: 0 — не следить, максимум 10 минут. */
+export function sanitizeIdleTimeoutSec(value: unknown): number {
+  if (value === null || value === undefined || value === '') {
+    return DEFAULT_SETTINGS.network.idleTimeoutSec
+  }
+  const n = Number(value)
+  if (!Number.isFinite(n)) return DEFAULT_SETTINGS.network.idleTimeoutSec
+  if (n <= 0) return 0
+  return Math.min(Math.round(n), 600)
+}
+
+/** Число попыток запроса: 1..5 (1 — без повторов). */
+export function sanitizeMaxAttempts(value: unknown): number {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return DEFAULT_SETTINGS.network.maxAttempts
+  return Math.min(Math.max(Math.round(n), 1), 5)
+}
+
+/** Выученные правки тела запроса → нормализованный словарь профилей. */
+export function sanitizeBodyFixes(value: unknown): Record<string, string[]> {
+  if (!value || typeof value !== 'object') return {}
+  const out: Record<string, string[]> = {}
+  for (const [key, list] of Object.entries(value as Record<string, unknown>)) {
+    if (!key || !Array.isArray(list)) continue
+    const fixes = list.filter(
+      (item): item is string => typeof item === 'string' && item.includes(':'),
+    )
+    if (fixes.length) out[key] = [...new Set(fixes)].slice(0, 8)
+  }
+  return out
+}
+
 interface SettingsState {
   settings: Settings
   update: (patch: Partial<Settings>) => void
-  updateSection: <K extends 'search' | 'image' | 'tools' | 'memory' | 'ui'>(
+  updateSection: <K extends 'search' | 'image' | 'tools' | 'memory' | 'ui' | 'network'>(
     section: K,
     patch: Partial<Settings[K]>,
   ) => void
@@ -341,6 +401,17 @@ export const useSettings = create<SettingsState>()(
           ...(persistedMemory ?? {}),
         }
 
+        // Надёжность сети появилась в 1.9.0: у старых сохранений секции нет.
+        // bodyFixes — выученные правки тела запроса, их нельзя терять при апдейте.
+        const persistedNetwork = p.settings?.network
+        const network: NetworkSettings = {
+          ...DEFAULT_SETTINGS.network,
+          ...(persistedNetwork ?? {}),
+          idleTimeoutSec: sanitizeIdleTimeoutSec(persistedNetwork?.idleTimeoutSec),
+          maxAttempts: sanitizeMaxAttempts(persistedNetwork?.maxAttempts),
+          bodyFixes: sanitizeBodyFixes(persistedNetwork?.bodyFixes),
+        }
+
         const merged: Settings = {
           ...DEFAULT_SETTINGS,
           ...(p.settings ?? {}),
@@ -348,6 +419,7 @@ export const useSettings = create<SettingsState>()(
           image,
           tools,
           memory,
+          network,
           ui: { ...DEFAULT_SETTINGS.ui, ...(p.settings?.ui ?? {}) },
           // старые сохранения поля не знают → подставляем окно по умолчанию
           contextWindow: sanitizeContextWindow(p.settings?.contextWindow),
@@ -378,6 +450,26 @@ export function getSettings(): Settings {
 
 export function settingsSnapshot(): Settings {
   return structuredClone(getSettings())
+}
+
+/**
+ * Запоминает выученные правки тела запроса для профиля подключения
+ * (providerId|baseUrl|model). Вызывается из слоя API, когда провайдер ответил
+ * 400 на конкретное поле: со следующего раза запрос уходит сразу в понятном
+ * серверу виде. Лишних записей нет — новые правки дописываются к старым.
+ */
+export function rememberBodyFixes(profile: string, fixes: readonly string[]): void {
+  if (!profile) return
+  const state = useSettings.getState()
+  const current = state.settings.network.bodyFixes
+  const existing = current[profile] ?? []
+  if (existing.length === fixes.length && existing.every((fix, i) => fix === fixes[i])) return
+  state.updateSection('network', { bodyFixes: { ...current, [profile]: [...fixes] } })
+}
+
+/** Выученные правки тела запроса для профиля подключения (пусто — не учились). */
+export function bodyFixesFor(settings: Settings, profile: string): string[] {
+  return settings.network.bodyFixes[profile] ?? []
 }
 
 /**

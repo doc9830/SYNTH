@@ -10,6 +10,8 @@
  * и в Node, и в Android WebView.
  */
 
+import { guardedFetch, NetGuardError, type LookupFn } from './netGuard'
+
 export interface PageLink {
   title: string
   url: string
@@ -45,6 +47,11 @@ export interface StaticReadOptions {
   maxBytes?: number
   maxChars?: number
   signal?: AbortSignal
+  /**
+   * Свой резолвер DNS для SSRF-проверки (на backend это node:dns);
+   * `false` — не проверять DNS, оставив проверки IP и служебных имён.
+   */
+  lookup?: LookupFn | false
 }
 
 /** Ошибка во входных данных (URL) — вызывающий код показывает её как есть. */
@@ -257,21 +264,34 @@ export async function readStaticPage(url: string, opts: StaticReadOptions = {}):
   let res: Response
   let body = ''
   let size = 0
+  let finalUrl = url
   try {
-    res = await fetch(url, { redirect: 'follow', headers: BROWSER_HEADERS, signal: controller.signal })
+    // guardedFetch: адрес и каждый редирект проверяются на SSRF (см. netGuard).
+    const guarded = await guardedFetch(url, {
+      headers: BROWSER_HEADERS,
+      signal: controller.signal,
+      lookup: opts.lookup,
+      warn: (message) => warnings.push(message),
+    })
+    res = guarded.response
+    finalUrl = guarded.finalUrl || res.url || url
+    if (guarded.visited.length > 1) {
+      warnings.push(`Были перенаправления: ${guarded.visited.join(' → ')}`)
+    }
     const raw = await readLimitedBody(res, maxBytes)
     body = decodeWithCharset(raw.bytes, res.headers.get('content-type') ?? '')
     size = raw.size
   } catch (err) {
     if (opts.signal?.aborted) throw new Error('Чтение страницы остановлено.')
     if (controller.signal.aborted) throw new Error(`Страница не ответила за ${timeoutMs} мс`)
+    // Заблокированный адрес показываем как есть: это понятная причина, а не сбой сети.
+    if (err instanceof NetGuardError) throw err
     throw new Error(`Не удалось открыть ${url}: ${err instanceof Error ? err.message : String(err)}`)
   } finally {
     clearTimeout(timer)
     opts.signal?.removeEventListener('abort', onOuterAbort)
   }
 
-  const finalUrl = res.url || url
   const type = (res.headers.get('content-type') ?? '').toLowerCase()
   const base: StaticPage = {
     url,

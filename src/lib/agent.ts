@@ -9,6 +9,7 @@ import { debugLog } from './debug'
 import { historyBudgetFor, trimHistory } from './context'
 import { getModelCapabilities, prettyJson, uid } from './utils'
 import { buildMemoryContext } from './memory'
+import { isUntrustedEnvelope, wrapUntrusted } from './untrusted'
 
 /** Лимит последовательных tool calls, чтобы не уйти в бесконечный цикл. */
 export const MAX_TOOL_ITERATIONS = 8
@@ -53,9 +54,56 @@ function toTokenUsage(usage?: {
  * Асинхронная из-за картинок: в истории они лежат байтами (Blob), а в запрос
  * уходят data URL — собираем их только здесь, в момент отправки.
  */
+
+/**
+ * Как передать модели «допиши начатое»:
+ *  - prefix — уже написанный текст как начало ответа ассистента (модель
+ *    продолжает с этого места, повторов нет);
+ *  - nudge — то же самое, но просьбой в сообщении пользователя: так делают
+ *    серверы, требующие строгого чередования ролей (user → assistant).
+ */
+export type ContinuationMode = 'prefix' | 'nudge'
+
+/** Просьба продолжить, когда префикс ассистента сервер не принимает. */
+export const CONTINUE_NUDGE_MESSAGE =
+  '[Продолжи свой предыдущий ответ ровно с того места, где он оборвался. Не начинай заново, не повторяй уже написанное и не извиняйся.]'
+
+/**
+ * Режим продолжения, выученный для подключения (baseUrl|model). Часть
+ * OpenAI-совместимых серверов отвечает 400 на сообщение ассистента в конце
+ * истории, поэтому один раз попробовав префикс и получив отказ, дальше
+ * сразу используем просьбу — без лишнего неудачного запроса.
+ */
+const continuationModes = new Map<string, ContinuationMode>()
+
+export function continuationProfile(settings: Settings): string {
+  return `${settings.baseUrl.trim()}|${settings.model.trim()}`
+}
+
+export function continuationModeFor(settings: Settings): ContinuationMode {
+  return continuationModes.get(continuationProfile(settings)) ?? 'prefix'
+}
+
+export function rememberContinuationMode(settings: Settings, mode: ContinuationMode): void {
+  continuationModes.set(continuationProfile(settings), mode)
+}
+
+/** Сброс выученных режимов — для проверок. */
+export function resetContinuationModes(): void {
+  continuationModes.clear()
+}
+
+export interface WireBuildOptions {
+  /** Уже написанный текст, который модель должна продолжить */
+  assistantPrefix?: string
+  /** Как передать продолжение (по умолчанию — префиксом ассистента) */
+  continuationMode?: ContinuationMode
+}
+
 export async function buildWireMessages(
   history: ChatMessage[],
   settings: Settings,
+  options: WireBuildOptions = {},
 ): Promise<WireMessage[]> {
   // Возможности модели: эвристика по id + ручное переопределение из настроек
   // («Изображения на вход»), чтобы картинки не пропадали у нестандартных имён.
@@ -114,6 +162,15 @@ export async function buildWireMessages(
       parts.push({ type: 'image_url', image_url: { url: await attachmentDataUrl(a) } })
     }
     out.push({ role: 'user', content: parts })
+  }
+
+  // Продолжение ответа: дописываем уже начатый текст. Обрезка контекста его не
+  // касается — префикс короткий (это последний ответ) и добавляется после trim.
+  if (options.assistantPrefix?.trim()) {
+    out.push({ role: 'assistant', content: options.assistantPrefix })
+    if ((options.continuationMode ?? 'prefix') === 'nudge') {
+      out.push({ role: 'user', content: CONTINUE_NUDGE_MESSAGE })
+    }
   }
 
   return out
@@ -181,9 +238,15 @@ async function executeTool(
       summary: result.summary,
       sources: result.sources?.length ?? 0,
       images: result.images?.length ?? 0,
+      untrusted: Boolean(result.untrusted),
     },
   ])
 
+  // Внешние данные (текст чужой страницы) уходят модели в рамке «это данные,
+  // а не инструкции». Инструмент мог обернуть результат сам — не оборачиваем дважды.
+  if (result.untrusted && !isUntrustedEnvelope(result.content)) {
+    return wrapUntrusted(result.summary ?? call.function.name, result.content)
+  }
   return result.content
 }
 
@@ -193,6 +256,40 @@ export interface AgentInput {
   settings: Settings
   signal: AbortSignal
   callbacks: AgentCallbacks
+  /**
+   * Продолжение оборванного ответа: текст, который модель должна дописать.
+   * Приложение отправляет его как начало ответа ассистента (или просьбой, если
+   * сервер такого не принимает) и приклеивает результат к уже показанному тексту.
+   */
+  assistantPrefix?: string
+  /** Как передать продолжение (по умолчанию — префиксом ассистента) */
+  continuationMode?: ContinuationMode
+}
+
+/**
+ * Сервер отклонил сообщение ассистента в конце истории? Тогда повторяем ход,
+ * передав продолжение служебной просьбой.
+ *
+ * Повтор безопасен только если ничего не сгенерировано (content пуст и
+ * инструменты не вызывались) — иначе пользователь увидел бы задвоенный текст.
+ */
+export function shouldFallbackToNudge(input: {
+  hasPrefix: boolean
+  mode: ContinuationMode
+  apiError: ApiError
+  content: string
+  records: ToolCallRecord[]
+  signal: AbortSignal
+}): boolean {
+  if (!input.hasPrefix || input.mode !== 'prefix') return false
+  if (input.signal.aborted) return false
+  if (input.content.length > 0 || input.records.length > 0) return false
+  if (input.apiError.status !== 400 && input.apiError.status !== 422) return false
+  const text = `${input.apiError.message} ${input.apiError.details ?? ''}`
+  // Так ругаются серверы, требующие строгого чередования ролей или не знающие
+  // незакрытого сообщения ассистента: «messages must alternate», «assistant
+  // message must be the last» и похожие формулировки.
+  return /assistant|alternat|prefill|prefix|last message|must end|roles/i.test(text)
 }
 
 /**
@@ -207,7 +304,10 @@ export async function runAgent(input: AgentInput): Promise<AgentRunResult> {
   const tools: Tool[] = buildTools(settings)
   const byName = toolMap(tools)
   const wireTools = toWireTools(tools)
-  const wire: WireMessage[] = await buildWireMessages(history, settings)
+  const wire: WireMessage[] = await buildWireMessages(history, settings, {
+    assistantPrefix: input.assistantPrefix,
+    continuationMode: input.continuationMode,
+  })
 
   let content = ''
   let reasoning = ''
@@ -221,6 +321,7 @@ export async function runAgent(input: AgentInput): Promise<AgentRunResult> {
       model: settings.model,
       messages: wire.length,
       tools: wireTools.map((t) => t.function.name),
+      continuation: input.assistantPrefix ? (input.continuationMode ?? 'prefix') : undefined,
     },
   ])
 

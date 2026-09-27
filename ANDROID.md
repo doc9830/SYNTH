@@ -170,12 +170,43 @@ markdown на фрагменты — `src/lib/ttsText.ts`.
 
 События `recognize` (`state`): `ready`, `speech`, `partial` (частичный текст — показывается в поле
 ввода сразу), `silence`, `final`, `error` (`NO_MATCH`, `SILENCE`, `NETWORK`, `PERMISSION_DENIED`,
-`BUSY`, `AUDIO`, `SERVER`, `NO_START`, `NO_RESULT`), `cancelled` (`reason: user` или `lifecycle`).
+`BUSY`, `AUDIO`, `SERVER`, `NO_START`, `NO_RESULT`, `TOO_MANY`, `NO_LANGUAGE`, `NO_PACK`),
+`cancelled` (`reason: user` или `lifecycle`).
+
+Коды API 31+ (`TOO_MANY` 10, сеть 11, `NO_LANGUAGE` 12, `NO_PACK` 13–15) держатся в плагине числами
+(`ERROR_CODE_*`): на старых API этих констант нет, а значения нужны. В `src/lib/asr.ts` у каждого кода
+своя фраза — `NO_PACK` прямо говорит, где искать русский офлайн-пакет.
 
 Как выбирается движок: на API 31+ — `createOnDeviceSpeechRecognizer()`, если
 `isOnDeviceRecognitionAvailable()` подтверждает офлайн-пакет (распознавание офлайн); на более
 старых версиях — обычный системный сервис с `EXTRA_PREFER_OFFLINE`, который может уйти в облако
 (приложение предупреждает об этом один раз). Язык — `ru-RU`, автостоп по тишине — 1100 мс.
+
+### Путь старта записи
+
+Старт `SpeechRecognizer` — самая хрупкая часть голосового ввода, поэтому в плагине он устроен так:
+
+1. **Пауза на подключение** (`ASR_BIND_DELAY_MS`, 350 мс): `startListening()` уходит в сервис не в том
+   же кадре, где создан распознаватель. Свежий распознаватель только подключается (`bindService`), а
+   старт до подключения теряется молча — в ответ не приходит ни одного колбэка, и человек видит
+   «сервис распознавания не ответил» при живом сервисе (так и было в 1.7.0–1.7.1). Пока идёт пауза,
+   «закончить» отдаёт пустой итог, а не ошибку сервиса.
+2. **Повтор другим распознавателем** (`ASR_MAX_ATTEMPTS` = 2): если за 8 с не пришло ни одного
+   колбэка, попытка повторяется — офлайн-сервис бывает объявлен, но молчит без скачанного пакета
+   языка, а системный в той же ситуации отвечает. Повтор берётся, только если он правда будет другим
+   распознавателем: тот же молчащий сервис со второй попытки не ответит, и человек ждал бы ошибку вдвое
+   дольше. Молчащий офлайн-сервис запоминается (`onDeviceSilent`) до перезапуска приложения, и
+   `asrAvailable()` больше не обещает его как рабочий. Неудача обеих попыток — событие `error` с кодом
+   `NO_START`.
+3. **Страховку снимает любой отклик сервиса** (`markAlive()`: `onReadyForSpeech`, `onBeginningOfSpeech`,
+   `onRmsChanged`, `onEndOfSpeech`, `onPartialResults`): молчание отличается от медленного, но
+   работающего сервиса — иначе запись обрывалась бы на середине фразы. А «закончить», нажатое раньше
+   самого старта, отменяет отложенный повтор: иначе запись начиналась бы заново после того, как человек
+   её закрыл.
+4. **Причина отказа не теряется**: отказ `startRecognize` разбирается по `error.code`
+   (`describeStartFailure` в `src/lib/asr.ts`), сам код и событие сервиса пишутся в «Консоль отладки»
+   и в лог устройства (`adb logcat -s SynthSpeech:* SynthSpeech/ASR:*`). Раньше `catch {}` в
+   `useDictation.ts` показывал на любой отказ одну фразу, и понять по ней ничего было нельзя.
 
 Что важно знать по устройству плагина:
 
@@ -273,12 +304,12 @@ markdown на фрагменты — `src/lib/ttsText.ts`.
 
 ```bash
 # 1. версия веб-бандла (попадает в appInfo → APP_VERSION)
-#    package.json → "version": "1.7.1"
+#    package.json → "version": "1.7.2"
 # 2. версия пакета
-#    android/app/build.gradle → versionCode 13, versionName "1.7.1"
+#    android/app/build.gradle → versionCode 14, versionName "1.7.2"
 npm run android:release
-cp android/app/build/outputs/apk/release/app-release.apk synth-v1.7.1.apk
-# 3. GitHub → Releases → Draft a new release: tag v1.7.1, приложить synth-v1.7.1.apk
+cp android/app/build/outputs/apk/release/app-release.apk synth-v1.7.2.apk
+# 3. GitHub → Releases → Draft a new release: tag v1.7.2, приложить synth-v1.7.2.apk
 ```
 
 После публикации релиза приложения на телефонах увидят обновление при следующем запуске.

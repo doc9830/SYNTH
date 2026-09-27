@@ -6,7 +6,7 @@ import {
   type StoreNames,
 } from 'idb'
 import type { ChatMessage, Conversation, MemoryEntry, MessageRecord } from '@/types'
-import { isLegacyRecord, sortMessages, splitLegacyConversation } from './dbModel'
+import { isLegacyRecord, sanitizeSummary, sortMessages, splitLegacyConversation } from './dbModel'
 
 const DB_NAME = 'deepseek-chat'
 /**
@@ -110,7 +110,14 @@ function getDB(): Promise<IDBPDatabase<ChatDB>> {
 export async function loadConversationsFromDB(): Promise<Conversation[]> {
   const db = await getDB()
   const all = await db.getAll(STORE_CONVERSATIONS)
-  return all.sort((a, b) => b.updatedAt - a.updatedAt)
+  // сводка (задача 04.2) могла остаться от прежней версии или испортиться:
+  // нормализуем на чтении, битую — выбрасываем
+  return all
+    .map((record) => {
+      const summary = sanitizeSummary(record.summary)
+      return summary === record.summary ? record : { ...record, summary }
+    })
+    .sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
 /**

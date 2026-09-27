@@ -2,11 +2,18 @@ import { chatTurn } from '@/api'
 import { ApiError } from '@/providers/openai'
 import type { WireMessage, WireToolCall } from '@/providers/openai/types'
 import { buildTools, toolMap, toWireTools, type Tool } from '@/tools/registry'
-import type { ChatMessage, TokenUsage, ToolCallRecord } from '@/types'
+import type { ChatMessage, ConversationSummary, TokenUsage, ToolCallRecord } from '@/types'
 import { attachmentDataUrl } from './attachments'
 import type { Settings } from './settings'
 import { debugLog } from './debug'
-import { historyBudgetFor, trimHistory } from './context'
+import { planHistory } from './context'
+import { summaryBlockFor } from './contextSummary'
+import {
+  planToolRounds,
+  toolCallToWire,
+  toolResultForContext,
+  toolRoundCost,
+} from './toolHistory'
 import { getModelCapabilities, prettyJson, uid } from './utils'
 import { buildMemoryContext } from './memory'
 import { isUntrustedEnvelope, wrapUntrusted } from './untrusted'
@@ -48,8 +55,10 @@ function toTokenUsage(usage?: {
 
 /**
  * История приложения → сообщения OpenAI-совместимого протокола.
- * Инструментальные раунды прошлых ходов разворачивать не нужно:
- * для контекста достаточно финальных текстов, а инструмент модель вызовет снова.
+ *
+ * Инструментальные раунды прошлых ходов разворачиваются (последние K — см.
+ * toolHistory.ts): без них модель не помнила, что уже искала и читала, и на
+ * «покажи те цены ещё раз» шла искать заново.
  *
  * Асинхронная из-за картинок: в истории они лежат байтами (Blob), а в запрос
  * уходят data URL — собираем их только здесь, в момент отправки.
@@ -98,6 +107,10 @@ export interface WireBuildOptions {
   assistantPrefix?: string
   /** Как передать продолжение (по умолчанию — префиксом ассистента) */
   continuationMode?: ContinuationMode
+  /** Сводка выпавшей части диалога — отдельным системным блоком (задача 04.2) */
+  summary?: ConversationSummary
+  /** Разворачивать tool-раунды прошлых ходов; по умолчанию — из настроек */
+  toolHistory?: boolean
 }
 
 export async function buildWireMessages(
@@ -121,21 +134,48 @@ export async function buildWireMessages(
     out.push({ role: 'system', content: systemContent })
   }
 
+  // Tool-раунды прошлых ходов (можно выключить в настройках, чтобы сравнить
+  // поведение): сколько их разворачивать и сколько токенов они займут.
+  const rounds =
+    (options.toolHistory ?? settings.toolHistoryInContext) ? planToolRounds(history) : null
+
   // Окно контекста: история длиннее окна целиком не уходит — часть провайдеров
   // на переполнении отвечает ошибкой вместо тихой обрезки. Системный промпт и
   // блок памяти сохраняем всегда, режем только старые сообщения.
-  const budget = historyBudgetFor(settings, systemContent)
-  const trimmed = budget > 0 ? trimHistory(history, budget) : { history, droppedMessages: 0, droppedTokens: 0 }
-  if (trimmed.droppedMessages > 0) {
+  const plan = planHistory(settings, history, {
+    systemContent,
+    extraCost: rounds ? toolRoundCost(rounds) : undefined,
+  })
+  if (plan.droppedMessages > 0) {
     debugLog('info', 'Контекст обрезан по окну', [
       `окно: ${settings.contextWindow} токенов`,
-      `бюджет истории: ${budget}`,
-      `отброшено сообщений: ${trimmed.droppedMessages} (~${trimmed.droppedTokens} токенов)`,
+      `бюджет истории: ${plan.budget}`,
+      `отброшено сообщений: ${plan.droppedMessages} (~${plan.droppedTokens} токенов)`,
+      `сжато в сводку: ${options.summary?.covered ?? 0}`,
     ])
   }
 
-  for (const m of trimmed.history) {
+  // Сводка выпавших сообщений — отдельным системным блоком в начале контекста.
+  const summaryBlock = summaryBlockFor(options.summary, plan.kept)
+  if (summaryBlock) out.push({ role: 'system', content: summaryBlock })
+
+  for (const m of plan.kept) {
     if (m.role === 'assistant') {
+      const calls = rounds?.ids.has(m.id) ? (m.toolCalls ?? []) : []
+      if (calls.length) {
+        // Раунд в том же виде, в каком он шёл в модель: сообщение ассистента с
+        // tool_calls и ответы role="tool" — порядок строгий, иначе провайдер
+        // отвечает 400. Результаты крупных инструментов усечены (toolHistory.ts).
+        out.push({
+          role: 'assistant',
+          content: m.content.trim() ? m.content : null,
+          tool_calls: calls.map(toolCallToWire),
+        })
+        for (const call of calls) {
+          out.push({ role: 'tool', tool_call_id: call.id, content: toolResultForContext(call) })
+        }
+        continue
+      }
       if (!m.content.trim()) continue
       out.push({ role: 'assistant', content: m.content })
       continue
@@ -264,6 +304,12 @@ export interface AgentInput {
   assistantPrefix?: string
   /** Как передать продолжение (по умолчанию — префиксом ассистента) */
   continuationMode?: ContinuationMode
+  /**
+   * Сводка выпавшей по окну части диалога (см. lib/contextSummary.ts).
+   * Приложение считает её до хода и передаёт сюда — тогда модель помнит
+   * прежний разговор уже в этом ответе.
+   */
+  summary?: ConversationSummary
 }
 
 /**
@@ -307,6 +353,7 @@ export async function runAgent(input: AgentInput): Promise<AgentRunResult> {
   const wire: WireMessage[] = await buildWireMessages(history, settings, {
     assistantPrefix: input.assistantPrefix,
     continuationMode: input.continuationMode,
+    summary: input.summary,
   })
 
   let content = ''
@@ -322,6 +369,8 @@ export async function runAgent(input: AgentInput): Promise<AgentRunResult> {
       messages: wire.length,
       tools: wireTools.map((t) => t.function.name),
       continuation: input.assistantPrefix ? (input.continuationMode ?? 'prefix') : undefined,
+      toolRounds: wire.filter((m) => m.role === 'tool').length,
+      summary: input.summary?.covered ?? 0,
     },
   ])
 

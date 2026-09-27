@@ -9,6 +9,7 @@ import {
   type ContinuationMode,
 } from './agent'
 import { persistStreamSnapshot, useConversations } from './conversations'
+import { prepareSummary } from './contextSummary'
 import { autoExtractMemories, parseRememberCommand, remember, shouldExtract } from './memory'
 import { getSettings, type Settings } from './settings'
 import { clearStreamDraft, publishStreamDraft } from './streamDraft'
@@ -167,6 +168,31 @@ export function useChat() {
     }
   }, [])
 
+  /**
+   * Сводка выпадающей части диалога для текущего хода (задача 04.2).
+   *
+   * Считается ДО запроса: сообщения, которые окно вот-вот выбросит, сжимаются
+   * в короткий текст отдельным дешёвым запросом, и модель помнит разговор уже
+   * в этом ответе. Ошибка суммаризации чат не ломает — возвращаем прежнюю
+   * сводку, история просто обрезается, как раньше (см. prepareSummary).
+   */
+  const ensureSummary = useCallback(
+    async (conversationId: string, history: ChatMessage[], signal: AbortSignal) => {
+      const store = useConversations.getState()
+      const summary = store.conversations.find((c) => c.id === conversationId)?.summary
+      const prep = await prepareSummary({ settings: getSettings(), history, summary, signal })
+      if (prep.error) {
+        debugLog('error', 'Сводка: ход продолжается без обновления сводки', [prep.error])
+      }
+      if (prep.created) {
+        // immediate: сводка должна пережить закрытие приложения сразу же
+        store.patchConversation(conversationId, { summary: prep.created }, true)
+      }
+      return prep.summary
+    },
+    [],
+  )
+
   const runTurn = useCallback(
     async (
       conversationId: string,
@@ -209,6 +235,9 @@ export function useChat() {
       }
 
       let mode: ContinuationMode | undefined = prefix ? continuationModeFor(settings) : undefined
+      // Сводка выпадающей части диалога — до запроса, чтобы модель помнила
+      // прежний разговор уже в этом ответе (задача 04.2).
+      const summary = await ensureSummary(conversationId, history, controller.signal)
       let result = await runAgent({
         history,
         settings,
@@ -216,6 +245,7 @@ export function useChat() {
         callbacks,
         assistantPrefix: prefix || undefined,
         continuationMode: mode,
+        summary,
       })
 
       // Сервер не принял сообщение ассистента последним (400 «должно быть
@@ -248,6 +278,7 @@ export function useChat() {
           callbacks,
           assistantPrefix: prefix,
           continuationMode: mode,
+          summary,
         })
       }
 
@@ -319,7 +350,7 @@ export function useChat() {
         setIsStreaming(false)
       }
     },
-    [flushDraft, commitTurn, patchAssistant, appendDraft, closeThinking, cancelPendingFlush],
+    [flushDraft, commitTurn, patchAssistant, appendDraft, closeThinking, cancelPendingFlush, ensureSummary],
   )
 
   /** Отправить сообщение (при необходимости создаёт новый чат). */

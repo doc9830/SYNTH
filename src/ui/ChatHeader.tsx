@@ -166,7 +166,7 @@ export function ChatHeader({
           </h2>
           <div className="flex items-center gap-1.5 text-[11px] text-neutral-500 dark:text-neutral-400">
             <ModelSelect kind="chat" variant="chip" value={settings.model} onChange={(model) => update({ model })} />
-            <ContextMeter messages={messages} />
+            <ContextMeter messages={messages} summary={conversation?.summary} />
           </div>
         </div>
 

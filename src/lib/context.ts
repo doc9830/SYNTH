@@ -72,6 +72,21 @@ export function historyTokens(history: ChatMessage[]): number {
   return total
 }
 
+/**
+ * Дополнительная стоимость одного сообщения ПОВЕРХ его собственного текста.
+ *
+ * Пример: развёрнутые tool-раунды (см. `toolRoundCost` в toolHistory.ts) —
+ * результат поиска или прочитанной страницы тоже занимает место в окне, и
+ * обрезка обязана это учитывать. Базовый текст сообщения считается отдельно
+ * (`messageTokens`), поэтому функция возвращает только доплату.
+ */
+export type MessageCost = (message: ChatMessage) => number
+
+/** Стоимость сообщения для бюджета окна: собственный текст + доплата. */
+function costWith(message: ChatMessage, extra?: MessageCost): number {
+  return messageTokens(message) + (extra ? extra(message) : 0)
+}
+
 /** Компактная подпись размера: 10240 → «10k», 32768 → «32k», 1500 → «1.5k». */
 export function formatTokens(tokens: number): string {
   if (!Number.isFinite(tokens) || tokens <= 0) return '0'
@@ -101,6 +116,8 @@ export function historyBudgetFor(settings: Settings, systemContent: string): num
 export interface TrimResult {
   /** История, которая влезает в бюджет */
   history: ChatMessage[]
+  /** Что не влезло: старые сообщения в порядке диалога (для сводки, задача 04.2) */
+  dropped: ChatMessage[]
   /** Сколько старых сообщений отброшено */
   droppedMessages: number
   /** Сколько токенов отброшено */
@@ -112,15 +129,22 @@ export interface TrimResult {
  * Последнее сообщение сохраняется всегда — иначе запрос потеряет смысл.
  * Начинать историю с ответа ассистента без вопроса тоже нельзя: он относится
  * к отброшенному сообщению и только путает модель.
+ *
+ * `costOf` позволяет считать сообщение дороже собственного текста — агент
+ * добавляет сюда развёрнутые tool-раунды (см. MessageCost).
  */
-export function trimHistory(history: ChatMessage[], budget: number): TrimResult {
-  const intact: TrimResult = { history, droppedMessages: 0, droppedTokens: 0 }
+export function trimHistory(
+  history: ChatMessage[],
+  budget: number,
+  extraCost?: MessageCost,
+): TrimResult {
+  const intact: TrimResult = { history, dropped: [], droppedMessages: 0, droppedTokens: 0 }
   if (!history.length || budget <= 0) return intact
 
   let keptTokens = 0
   let start = history.length
   for (let i = history.length - 1; i >= 0; i -= 1) {
-    const cost = messageTokens(history[i])
+    const cost = costWith(history[i], extraCost)
     const isLast = start === history.length
     if (!isLast && keptTokens + cost > budget) break
     keptTokens += cost
@@ -129,7 +153,7 @@ export function trimHistory(history: ChatMessage[], budget: number): TrimResult 
 
   // выкидываем «ответы без вопроса» с начала оставшегося куска
   while (start < history.length - 1 && history[start].role === 'assistant') {
-    keptTokens -= messageTokens(history[start])
+    keptTokens -= costWith(history[start], extraCost)
     start += 1
   }
 
@@ -138,6 +162,7 @@ export function trimHistory(history: ChatMessage[], budget: number): TrimResult 
   const dropped = history.slice(0, start)
   return {
     history: history.slice(start),
+    dropped,
     droppedMessages: dropped.length,
     droppedTokens: historyTokens(dropped),
   }
@@ -177,15 +202,78 @@ function systemTokens(settings: Settings, history: ChatMessage[]): number {
 }
 
 /**
+ * Готовый план запроса: что именно уйдёт в модель и что выпало по окну.
+ *
+ * Нужен двум потребителям:
+ *  - агенту (см. buildWireMessages) — разложить историю по wire-сообщениям;
+ *  - подготовке сводки (см. lib/contextSummary.ts) — узнать, какие сообщения
+ *    окно выбрасывает, чтобы сжать их ДО отправки запроса.
+ *
+ * Считает по тем же правилам, что и сам запрос, поэтому вызывающие обязаны
+ * передать тот же `systemContent`: у агента он собран с учётом статистики
+ * памяти (track: true), у плана — без неё.
+ */
+export interface HistoryPlan {
+  /** Системная часть запроса (промпт + память) */
+  systemContent: string
+  /** Бюджет токенов на историю; 0 — без ограничения */
+  budget: number
+  /** История, которая уйдёт в запрос */
+  kept: ChatMessage[]
+  /** Что выпало по окну (в порядке диалога) */
+  dropped: ChatMessage[]
+  droppedMessages: number
+  droppedTokens: number
+}
+
+export function planHistory(
+  settings: Settings,
+  history: ChatMessage[],
+  options: { systemContent?: string; extraCost?: MessageCost } = {},
+): HistoryPlan {
+  const lastUser = [...history].reverse().find((m) => m.role === 'user')
+  // track: false — план не должен накручивать статистику памяти
+  const memoryBlock = buildMemoryContext(settings, lastUser?.content ?? '', { track: false })
+  const systemContent =
+    options.systemContent ??
+    [settings.systemPrompt.trim(), memoryBlock].filter(Boolean).join('\n\n')
+
+  const budget = historyBudgetFor(settings, systemContent)
+  const trimmed =
+    budget > 0
+      ? trimHistory(history, budget, options.extraCost)
+      : { history, dropped: [], droppedMessages: 0, droppedTokens: 0 }
+
+  return {
+    systemContent,
+    budget,
+    kept: trimmed.history,
+    dropped: trimmed.dropped,
+    droppedMessages: trimmed.droppedMessages,
+    droppedTokens: trimmed.droppedTokens,
+  }
+}
+
+
+/**
  * Замер контекста для текущего диалога: сколько токенов уйдёт в следующий
  * запрос, сколько всего накопилось и сколько сообщений срежет окно.
  * Считает по тем же правилам, что и агент (см. buildWireMessages).
+ *
+ * `options.cost` — доплата за развёрнутые tool-раунды (см. MessageCost):
+ * метр контекста в шапке подставляет то же, что уйдёт в запрос на самом деле.
  */
-export function measureContext(settings: Settings, history: ChatMessage[]): ContextUsage {
+export function measureContext(
+  settings: Settings,
+  history: ChatMessage[],
+  options: { extraCost?: MessageCost } = {},
+): ContextUsage {
   const limit = settings.contextWindow
   const budget = inputBudget(limit, settings.maxTokens)
   const system = systemTokens(settings, history)
-  const full = system + historyTokens(history)
+  const cost = options.extraCost
+  const extra = cost ? history.reduce((sum, message) => sum + cost(message), 0) : 0
+  const full = system + historyTokens(history) + extra
   const exact = lastPromptTokens(history)
 
   if (limit <= 0) {
@@ -193,8 +281,9 @@ export function measureContext(settings: Settings, history: ChatMessage[]): Cont
   }
 
   const historyBudget = Math.max(MIN_HISTORY_BUDGET, budget - system)
-  const trimmed = trimHistory(history, historyBudget)
-  const used = system + historyTokens(trimmed.history)
+  const trimmed = trimHistory(history, historyBudget, cost)
+  const keptExtra = cost ? trimmed.history.reduce((sum, message) => sum + cost(message), 0) : 0
+  const used = system + historyTokens(trimmed.history) + keptExtra
 
   return {
     used,

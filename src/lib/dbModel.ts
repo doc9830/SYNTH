@@ -5,7 +5,13 @@
  * IndexedDB-обвязка живёт в `db.ts`. Миграция обязана переносить старые данные
  * без потерь, поэтому вся раскладка старой записи описана именно здесь.
  */
-import type { ChatMessage, Conversation, ImageAttachment, MessageRecord } from '@/types'
+import type {
+  ChatMessage,
+  Conversation,
+  ConversationSummary,
+  ImageAttachment,
+  MessageRecord,
+} from '@/types'
 import { dataUrlToBlob } from './dataUrl'
 
 /** Сколько символов последнего сообщения попадает в подпись чата */
@@ -69,9 +75,29 @@ export function previewOf(messages: ChatMessage[]): string {
   return ''
 }
 
+/**
+ * Сводка чата из базы: поле появилось в 1.9.0 (задача 04.2), поэтому читаем
+ * терпимо — у старых записей его нет, а испорченную сводку лучше выбросить,
+ * чем подставить модели мусор.
+ */
+export function sanitizeSummary(value: unknown): ConversationSummary | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const raw = value as Partial<ConversationSummary>
+  const text = typeof raw.text === 'string' ? raw.text.trim() : ''
+  if (!text) return undefined
+  const covered = Number(raw.covered)
+  const updatedAt = Number(raw.updatedAt)
+  return {
+    text,
+    upToMessageId: typeof raw.upToMessageId === 'string' ? raw.upToMessageId : '',
+    covered: Number.isFinite(covered) && covered > 0 ? Math.round(covered) : 0,
+    updatedAt: Number.isFinite(updatedAt) ? updatedAt : Date.now(),
+  }
+}
+
 /** Обёртка чата по его сообщениям: подпись, число сообщений, время правки. */
 export function wrapperOf(
-  base: Pick<Conversation, 'id' | 'title' | 'createdAt' | 'pinned' | 'model'>,
+  base: Pick<Conversation, 'id' | 'title' | 'createdAt' | 'pinned' | 'model' | 'summary'>,
   messages: ChatMessage[],
   updatedAt = Date.now(),
 ): Conversation {
@@ -82,6 +108,9 @@ export function wrapperOf(
     updatedAt,
     pinned: base.pinned,
     model: base.model,
+    // сводка выпавшей части диалога едет вместе с чатом и не теряется при
+    // обновлении подписи/числа сообщений (см. sanitizeSummary)
+    summary: sanitizeSummary(base.summary),
     preview: previewOf(messages),
     messageCount: messages.length,
   }
@@ -111,6 +140,8 @@ export function splitLegacyConversation(legacy: LegacyConversation): {
         createdAt,
         pinned: Boolean(legacy.pinned),
         model: typeof legacy.model === 'string' ? legacy.model : '',
+        // сводку старых записей переносим: пересчитывать её незачем
+        summary: legacy.summary,
       },
       messages,
       updatedAt,

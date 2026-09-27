@@ -17,6 +17,7 @@ import {
   lightMessage,
   messageRecord,
   previewOf,
+  sanitizeSummary,
   sortMessages,
   splitLegacyConversation,
   storedAttachment,
@@ -324,6 +325,42 @@ check(
     Buffer.byteLength(JSON.stringify(photos.map((a) => a.dataUrl)), 'utf8'),
 )
 check('у обёртки постоянный размер, сколько бы сообщений ни было', wrapperBytes < 512)
+
+/* ─────────────── сводка выпавшей части диалога (задача 04.2) ─────────────── */
+
+const chatSummary = {
+  text: 'Пользователь просил показать цены на iPhone и обещал вернуться к выбору',
+  upToMessageId: 'msg-7',
+  covered: 6,
+  updatedAt: 1,
+}
+const conversationWithSummary = wrapperOf({ ...storedConversation, summary: chatSummary }, [newUserMessage])
+check('сводка чата сохраняется вместе с обёрткой', conversationWithSummary.summary?.text === chatSummary.text)
+check(
+  'сводка помнит, по какое сообщение актуальна',
+  conversationWithSummary.summary?.upToMessageId === 'msg-7' &&
+    conversationWithSummary.summary?.covered === 6,
+)
+check(
+  'обёртка без сводки остаётся без неё',
+  wrapperOf(storedConversation, [newUserMessage]).summary === undefined,
+)
+check(
+  'битая сводка выбрасывается, а не уходит модели',
+  sanitizeSummary({ text: '   ' }) === undefined &&
+    sanitizeSummary('сводка') === undefined &&
+    sanitizeSummary({ text: 42 }) === undefined,
+)
+const normalized = sanitizeSummary({ text: '  цены  ', covered: '5', upToMessageId: 9 })
+check(
+  'сводка из старых записей нормализуется',
+  normalized?.text === 'цены' && normalized?.covered === 5 && normalized?.upToMessageId === '',
+)
+check(
+  'обновление подписи чата не теряет сводку',
+  wrapperOf({ ...storedConversation, summary: chatSummary }, [...legacyMessages, newUserMessage])
+    .summary?.text === chatSummary.text,
+)
 
 console.log(
   `\nразмер одной записи: было ${(legacyBytes / 1024 / 1024).toFixed(2)} МБ (весь чат с 20 картинками) → ` +

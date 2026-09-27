@@ -156,6 +156,13 @@ export interface Settings {
    * Виден в шапке чата как «10/32k» и настраивается по тапу на него.
    */
   contextWindow: number
+  /**
+   * Разворачивать ли в контекст инструментальные раунды прошлых ходов
+   * (см. src/lib/toolHistory.ts): тогда модель видит, что уже искала и читала,
+   * и на «покажи те цены ещё раз» отвечает по найденному, а не идёт искать
+   * заново. Выключение оставлено, чтобы сравнить поведение и сэкономить токены.
+   */
+  toolHistoryInContext: boolean
   /** Онбординг пройден (или осознанно пропущен) — чтобы не открывать его каждый запуск */
   setupDone: boolean
   search: SearchSettings
@@ -185,6 +192,9 @@ export const DEFAULT_SETTINGS: Settings = {
   // 32k — компромисс: влезает почти любой провайдер, длинные чаты режутся не сразу.
   // Реальное окно модели пользователь ставит по тапу на «10/32k» в шапке чата.
   contextWindow: 32768,
+  // инструментальные раунды прошлых ходов — в контекст: без них модель
+  // повторяет поиски и теряет источники (см. задачу 04.1)
+  toolHistoryInContext: true,
   setupDone: false,
   search: {
     enabled: true,
@@ -423,6 +433,12 @@ export const useSettings = create<SettingsState>()(
           ui: { ...DEFAULT_SETTINGS.ui, ...(p.settings?.ui ?? {}) },
           // старые сохранения поля не знают → подставляем окно по умолчанию
           contextWindow: sanitizeContextWindow(p.settings?.contextWindow),
+          // история инструментов в контексте появилась в 1.9.0: у прежних
+          // сохранений её нет — включаем, дальше пользователь решает сам
+          toolHistoryInContext:
+            p.settings?.toolHistoryInContext === undefined
+              ? DEFAULT_SETTINGS.toolHistoryInContext
+              : Boolean(p.settings.toolHistoryInContext),
           // «изображения на вход» появилось в 1.4.1: у старых сохранений — авто
           visionInput: sanitizeVisionInput(p.settings?.visionInput),
           // Тип подключения: если пользователь уже вписал адрес Anthropic,

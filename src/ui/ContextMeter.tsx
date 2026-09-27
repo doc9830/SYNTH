@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ChatMessage } from '@/types'
+import type { ChatMessage, ConversationSummary } from '@/types'
 import {
   CONTEXT_PRESETS,
   contextPercent,
+  estimateTokens,
   formatTokens,
   measureContext,
   type ContextUsage,
 } from '@/lib/context'
 import { sanitizeContextWindow, useSettings } from '@/lib/settings'
+import { planToolRounds, toolRoundCost } from '@/lib/toolHistory'
+import { summaryCovers } from '@/lib/contextSummary'
 import { selectStreamPatch, useStreamDraft } from '@/lib/streamDraft'
 import { cn } from '@/lib/utils'
 import { btnCls, inputCls } from './controls'
@@ -19,7 +22,8 @@ import { Sheet } from './Sheet'
  * По тапу открывается шторка «Контекст»: видно, сколько токенов уйдёт в
  * следующий запрос, и настраивается размер окна модели. История длиннее окна
  * обрезается агентом (src/lib/agent.ts) — старые сообщения не отправляются,
- * системный промпт и память сохраняются.
+ * системный промпт, память, сводка выпавшего разговора (lib/contextSummary.ts)
+ * и последние tool-раунды (lib/toolHistory.ts) сохраняются.
  */
 
 /** Замер не пересчитываем на каждый кадр стрима — раз в 400 мс достаточно. */
@@ -27,9 +31,11 @@ const MEASURE_THROTTLE_MS = 400
 
 interface ContextMeterProps {
   messages: ChatMessage[]
+  /** Сводка выпавшей части диалога — показываем, что именно помнит модель */
+  summary?: ConversationSummary
 }
 
-export function ContextMeter({ messages }: ContextMeterProps) {
+export function ContextMeter({ messages, summary }: ContextMeterProps) {
   const settings = useSettings((s) => s.settings)
   const update = useSettings((s) => s.update)
   const [open, setOpen] = useState(false)
@@ -55,11 +61,26 @@ export function ContextMeter({ messages }: ContextMeterProps) {
 
   const [usage, setUsage] = useState<ContextUsage>(() => measureContext(settings, measured))
 
+  /** Стоимость развёрнутых tool-раундов — метр обязан считать как агент. */
+  const toolPlan = useMemo(
+    () => (settings.toolHistoryInContext ? planToolRounds(measured) : null),
+    [settings.toolHistoryInContext, measured],
+  )
+  const toolTokens = toolPlan ? [...toolPlan.tokens.values()].reduce((a, b) => a + b, 0) : 0
+
   useEffect(() => {
     const delay = MEASURE_THROTTLE_MS - (Date.now() - measuredAt.current)
     const measure = () => {
       measuredAt.current = Date.now()
-      setUsage(measureContext(settings, measured))
+      setUsage(
+        measureContext(settings, measured, {
+          // планируем заново: функция доплаты не должна попадать в зависимости
+          // эффекта, иначе замер перезапускается на каждом рендере
+          extraCost: settings.toolHistoryInContext
+            ? toolRoundCost(planToolRounds(measured))
+            : undefined,
+        }),
+      )
     }
     if (delay <= 0) {
       measure()
@@ -106,7 +127,13 @@ export function ContextMeter({ messages }: ContextMeterProps) {
         description="Сколько токенов уходит в запрос и сколько влезает в окно модели. Диалог длиннее окна обрезается — самые старые сообщения не отправляются."
       >
         <div className="space-y-5">
-          <UsageCard usage={usage} count={messages.length} />
+          <UsageCard
+            usage={usage}
+            count={messages.length}
+            summary={summary}
+            summaryActive={summaryCovers(summary, measured)}
+            toolTokens={toolTokens}
+          />
 
           <section>
             <h4 className="mb-1 px-1 text-[11px] font-medium tracking-wide text-neutral-500 uppercase dark:text-neutral-400">
@@ -203,10 +230,27 @@ function PresetButton({
 }
 
 /** Сводка: сколько уйдёт в запрос, сколько всего накопилось и что обрезано. */
-function UsageCard({ usage, count }: { usage: ContextUsage; count: number }) {
+function UsageCard({
+  usage,
+  count,
+  summary,
+  summaryActive,
+  toolTokens,
+}: {
+  usage: ContextUsage
+  count: number
+  /** Сводка выпавшей части диалога (задача 04.2) */
+  summary?: ConversationSummary
+  /** Сводка реально уходит в контекст (сжатые сообщения уже выпали) */
+  summaryActive?: boolean
+  /** Сколько из запроса занято результатами инструментов прошлых ходов */
+  toolTokens?: number
+}) {
   const percent = contextPercent(usage.used, usage.limit)
   const limitLabel = usage.limit > 0 ? formatTokens(usage.limit) : '∞'
   const reserve = usage.limit > 0 ? Math.max(0, usage.limit - usage.budget) : 0
+  const [showSummary, setShowSummary] = useState(false)
+  const summaryText = summary?.text.trim() ?? ''
 
   return (
     <div className="rounded-2xl border border-neutral-200 p-3 dark:border-neutral-800">
@@ -232,6 +276,9 @@ function UsageCard({ usage, count }: { usage: ContextUsage; count: number }) {
           {reserve > 0 ? ` · под ответ зарезервировано ${formatTokens(reserve)}` : ''}
         </li>
         <li>Сообщений в диалоге: {count}</li>
+        {toolTokens ? (
+          <li>Из них инструменты прошлых ходов: ~{formatTokens(toolTokens)}</li>
+        ) : null}
         {usage.droppedMessages > 0 && (
           <li className="text-amber-600 dark:text-amber-400">
             Обрезано по окну: {usage.droppedMessages} сообщ. (~{formatTokens(usage.droppedTokens)})
@@ -243,6 +290,37 @@ function UsageCard({ usage, count }: { usage: ContextUsage; count: number }) {
         ) : null}
         <li>Числа оценочные: считаем по символам, токенизатора провайдера у приложения нет.</li>
       </ul>
+
+      {summaryText && (
+        <div className="mt-3 rounded-xl border border-neutral-200 p-2.5 dark:border-neutral-800">
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-[11px] font-medium text-neutral-700 dark:text-neutral-200">
+              Сводка прежнего разговора
+            </span>
+            <span className="shrink-0 text-[11px] text-neutral-500 dark:text-neutral-400">
+              {summary?.covered ? `сжато ${summary.covered} сообщ. · ` : ''}~
+              {formatTokens(estimateTokens(summaryText))}
+            </span>
+          </div>
+          <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-400">
+            {summaryActive
+              ? 'Уходит в контекст вместо сообщений, не поместившихся в окно.'
+              : 'Пока не отправляется: сжатые сообщения ещё помещаются в окно.'}
+          </p>
+          <button
+            type="button"
+            onClick={() => setShowSummary((value) => !value)}
+            className="mt-1.5 text-[11px] font-medium text-neutral-700 underline dark:text-neutral-200"
+          >
+            {showSummary ? 'Скрыть текст' : 'Показать текст сводки'}
+          </button>
+          {showSummary && (
+            <p className="mt-1.5 whitespace-pre-wrap text-[11px] leading-relaxed text-neutral-600 dark:text-neutral-300">
+              {summaryText}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   )
 }

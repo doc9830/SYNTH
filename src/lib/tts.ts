@@ -4,7 +4,7 @@ import { isNativeApp } from './nativeShell'
  * Озвучка ответов системным синтезом речи (задача 06).
  *
  * Две платформы — один интерфейс:
- *  - Android (APK): локальный плагин `SynthTts` поверх
+ *  - Android (APK): локальный плагин `SynthSpeech` поверх
  *    `android.speech.tts.TextToSpeech` (офлайн, без разрешений, очередь
  *    фрагментов живёт внутри движка);
  *  - браузер/PWA: `window.speechSynthesis` с русским голосом, если он есть.

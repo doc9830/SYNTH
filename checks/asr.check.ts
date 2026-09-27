@@ -319,6 +319,25 @@ const nativeAsr = source('lib/nativeAsr.ts')
 check('отмена отпускает микрофон плагина', /cancelRecognize/.test(nativeAsr))
 check('после сессии слушатель событий снимается', /await detachListener\(\)/.test(nativeAsr))
 
+// Имя плагина в мосте — то же, что в @CapacitorPlugin(name = "SynthSpeech"):
+// при расхождении Capacitor отвечает «plugin is not implemented on android»,
+// и приложение считает, что сервиса распознавания нет (в 1.7.0 так потерялась
+// озвучка — там мост TTS звал старое имя SynthTts).
+
+const javaSpeechPlugin = androidSource('app/src/main/java/app/synth/hub/SpeechPlugin.java')
+const javaPluginName = /@CapacitorPlugin\(\s*name\s*=\s*"([^"]+)"/.exec(javaSpeechPlugin)?.[1]
+const asrPluginName = /registerPlugin<[^>]+>\('([^']+)'\)/.exec(nativeAsr)?.[1]
+check(
+  'мост распознавания зовёт плагин тем же именем, что и Java',
+  javaPluginName === 'SynthSpeech' && asrPluginName === javaPluginName,
+)
+check(
+  'MainActivity регистрирует общий плагин речи',
+  androidSource('app/src/main/java/app/synth/hub/MainActivity.java').includes(
+    'registerPlugin(SpeechPlugin.class)',
+  ),
+)
+
 const asrLayer = source('lib/asr.ts')
 check('события прошлых сессий игнорируются', /const alive = \(\) => session === mySession/.test(asrLayer))
 check('вне Android распознавание не стартует', /if \(!asrSupported\(\)\) return/.test(asrLayer))

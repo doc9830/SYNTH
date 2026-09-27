@@ -182,6 +182,36 @@ check(
   entry.includes('looksNativeShell()') && /else \{\s*registerSW\(\{ immediate: true \}\)/.test(entry),
 )
 
+// ── Мост TTS и нативный плагин: одно имя ───────────────────────────────
+//
+// В 1.7.0 плагин переименовали (TtsPlugin.java → SpeechPlugin.java,
+// @CapacitorPlugin(name = "SynthSpeech")), а мост озвучки продолжал звать SynthTts.
+// Capacitor на такое отвечает «plugin is not implemented on android», проверка
+// движка получала отказ, и кнопка «Озвучить» молчала при живом голосе на устройстве.
+// Нативный плагин в Node не поднимается, поэтому соответствие имён держат
+// проверки по исходникам — это единственное место, где оно видно.
+
+const androidSource = (relative: string) =>
+  readFileSync(fileURLToPath(new URL(`../android/${relative}`, import.meta.url)), 'utf8')
+
+const speechPlugin = androidSource('app/src/main/java/app/synth/hub/SpeechPlugin.java')
+const javaPluginName = /@CapacitorPlugin\(\s*name\s*=\s*"([^"]+)"/.exec(speechPlugin)?.[1]
+
+/** Имена, под которыми плагин зовут мосты: озвучка и распознавание. */
+const bridgePluginNames = [source('lib/nativeTts.ts'), source('lib/nativeAsr.ts')].flatMap((file) =>
+  [...file.matchAll(/registerPlugin<[^>]+>\('([^']+)'\)/g)].map((match) => match[1]),
+)
+
+check('плагин речи зарегистрирован как SynthSpeech', javaPluginName === 'SynthSpeech')
+check(
+  'оба моста зовут плагин тем же именем, что и Java',
+  bridgePluginNames.length === 2 && bridgePluginNames.every((name) => name === javaPluginName),
+)
+check(
+  'старого имени SynthTts в мосте озвучки не осталось',
+  !source('lib/nativeTts.ts').includes("'SynthTts'"),
+)
+
 // ── Нажатие кнопки озвучки (веб-ветка, с поддельным speechSynthesis) ────
 //
 // Проверяем то, на что жалуются пользователи: «кнопки нет». Кнопка есть всегда,

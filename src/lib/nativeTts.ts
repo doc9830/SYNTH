@@ -12,6 +12,12 @@ import { isNativeApp } from './nativeShell'
  *
  * Распознавание речи (тот же плагин, задача 07) — в src/lib/nativeAsr.ts:
  * имя плагина SynthSpeech стало общим, потому что он отвечает за оба движка.
+ *
+ * Имя в registerPlugin() обязано совпадать с @CapacitorPlugin(name = "SynthSpeech")
+ * в SpeechPlugin.java. Расхождение Capacitor сам не замечает: на вызовы приходит
+ * «"SynthTts" plugin is not implemented on android», проверка движка получает отказ, и
+ * озвучка выглядит недоступной, хотя голос на устройстве есть — так было в 1.7.0
+ * (см. CHANGELOG 1.7.1). Соответствие имён держит checks/tts.check.ts.
  */
 
 /** Причины недоступности — те же коды, что отдаёт плагин. */
@@ -35,7 +41,7 @@ export interface NativeTtsProgress {
   reason?: string
 }
 
-interface SynthTtsPlugin {
+interface SynthSpeechTts {
   available(): Promise<NativeTtsInfo>
   speak(options: { chunks: string[]; rate?: number; pitch?: number }): Promise<{ count: number }>
   stop(): Promise<{ stopped: boolean }>
@@ -46,14 +52,14 @@ interface SynthTtsPlugin {
   ): Promise<PluginListenerHandle>
 }
 
-let instance: SynthTtsPlugin | null = null
+let instance: SynthSpeechTts | null = null
 
 /** Текущий подписчик на события прогресса (одна сессия озвучки за раз). */
 let progressHandler: ((data: NativeTtsProgress) => void) | null = null
 let progressHandle: Promise<PluginListenerHandle> | null = null
 
-function tts(): SynthTtsPlugin {
-  instance ??= registerPlugin<SynthTtsPlugin>('SynthTts')
+function tts(): SynthSpeechTts {
+  instance ??= registerPlugin<SynthSpeechTts>('SynthSpeech')
   return instance
 }
 

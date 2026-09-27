@@ -4,16 +4,16 @@
  */
 import {
   CONTEXT_PRESETS,
+  budgetWithoutExtraSystem,
   contextPercent,
   estimateTokens,
   formatTokens,
   historyBudgetFor,
   inputBudget,
-  measureContext,
   messageTokens,
-  planHistory,
   trimHistory,
 } from '@/lib/context'
+import { measureContext, planContext } from '@/lib/contextPlan'
 import {
   SUMMARY_MAX_CHARS,
   chunkMessages,
@@ -32,13 +32,14 @@ import {
   resultTextOf,
   toolResultForContext,
   toolResultLink,
+  toolResultOneLiner,
   toolRoundCost,
   truncateToolResult,
 } from '@/lib/toolHistory'
 import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '@/lib/untrusted'
-import { buildWireMessages } from '@/lib/agent'
+import { buildWireMessages, squeezeWire, wireTokens } from '@/lib/agent'
 import { DEFAULT_SETTINGS, sanitizeContextWindow, type Settings } from '@/lib/settings'
-import type { ChatMessage, ToolCallRecord } from '@/types'
+import type { ChatMessage, ConversationSummary, ToolCallRecord } from '@/types'
 import { check, finish } from './harness'
 
 /** Собирает сообщение без обязательных полей, чтобы не загромождать тесты. */
@@ -259,10 +260,9 @@ check(
   wireMany.filter((m) => m.role === 'tool').length === TOOL_HISTORY_ROUNDS,
 )
 check(
-  'стоимость tool-раундов увеличивает замер контекста',
-  measureContext(chatSettings, manyRounds, {
-    extraCost: toolRoundCost(planToolRounds(manyRounds)),
-  }).used > measureContext(chatSettings, manyRounds).used,
+  'стоимость tool-раундов входит в замер контекста',
+  measureContext(chatSettings, manyRounds).used >
+    measureContext(chatSettings, manyRounds, { toolHistory: false }).used,
 )
 
 const heavyHistory = [msg('user', 'вопрос'), toolRound(9, 'x'.repeat(8000)), msg('user', 'ещё вопрос')]
@@ -283,6 +283,82 @@ const nearLimit = [
 const plainKept = trimHistory(nearLimit, 700).history.length
 const extraKept = trimHistory(nearLimit, 700, toolRoundCost(planToolRounds(nearLimit))).history.length
 check('доплата за tool-результат вытесняет лишнее из окна', extraKept < plainKept)
+
+/* ─── рост запроса внутри хода: сворачивание старых результатов (этап B) ─── */
+
+/** Результат инструмента в рамке внешних данных — как настоящая длинная страница. */
+const veryLongPage = `${UNTRUSTED_OPEN} · источник: read_url: example.com]\n${'стр'.repeat(4000)}\n${UNTRUSTED_CLOSE}\n\nКак отвечать: перескажи страницу.`
+const heavyRounds = [1, 2, 3].flatMap((i) => [
+  msg('user', `вопрос ${i}`),
+  toolRound(30 + i, `${veryLongPage} ${i}`),
+])
+const heavyWire = await buildWireMessages(heavyRounds, chatSettings)
+const heavyRecords = new Map<string, ToolCallRecord>()
+for (const m of heavyRounds) {
+  for (const call of m.toolCalls ?? []) heavyRecords.set(call.id, call)
+}
+const toolAt = heavyWire.map((m, i) => (m.role === 'tool' ? i : -1)).filter((i) => i >= 0)
+const calledIdsBefore = (at: number) =>
+  heavyWire.slice(0, at).flatMap((m) => (m.tool_calls ?? []).map((c) => c.id))
+
+const tokensBefore = wireTokens(heavyWire)
+const squeezed = squeezeWire(heavyWire, tokensBefore - 500, heavyRecords)
+// Свёрнутый результат — короткая выжимка; полный — сотни строк страницы.
+const folded = toolAt.filter((i) => String(heavyWire[i].content).length < 1000)
+
+check('ни один результат инструмента не потерялся', toolAt.length === heavyRounds.filter(isToolRound).length)
+check(
+  'каждый результат по-прежнему следует за своим вызовом',
+  toolAt.every((i) => calledIdsBefore(i).includes(String(heavyWire[i].tool_call_id))),
+)
+check(
+  'запрос сверх бюджета сворачивает старые результаты (свежий — нет)',
+  squeezed > 0 && folded.length >= 1 && folded.length < toolAt.length,
+)
+
+// Жёсткий бюджет: сворачивается всё, что уже не свежее, но не последний раунд
+const tightWire = await buildWireMessages(heavyRounds, chatSettings)
+const tightSqueezed = squeezeWire(tightWire, 1, heavyRecords)
+const tightFull = tightWire
+  .map((m, i) => (m.role === 'tool' && String(m.content).length > 1000 ? i : -1))
+  .filter((i) => i >= 0)
+check(
+  'при жёстком бюджете сворачиваются все старые результаты, а свежий остаётся',
+  tightSqueezed === toolAt.length - 1 && tightFull.length === 1,
+)
+check('сжатый запрос заметно легче исходного', wireTokens(tightWire) < tokensBefore / 2)
+check('свёрнутый результат стал заметно короче', folded.every((i) => String(heavyWire[i].content).length < 1000))
+check('запрос вернулся в бюджет', wireTokens(heavyWire) <= tokensBefore - 500 + 400)
+check(
+  'рамка внешних данных в свёрнутом результате сохранена',
+  folded.every(
+    (i) =>
+      String(heavyWire[i].content).includes(UNTRUSTED_OPEN) &&
+      String(heavyWire[i].content).includes(UNTRUSTED_CLOSE),
+  ),
+)
+check(
+  'свежий раунд не трогаем: последний результат остался полным',
+  String(heavyWire[toolAt[toolAt.length - 1]]?.content ?? '').length > 1000,
+)
+
+const roomyWire = await buildWireMessages(heavyRounds, chatSettings)
+check(
+  'в пределах бюджета запрос не переписывается',
+  squeezeWire(roomyWire, wireTokens(roomyWire) + 500, heavyRecords) === 0,
+)
+check('без ограничения окна (бюджет 0) сжатия нет', squeezeWire(roomyWire, 0, heavyRecords) === 0)
+
+const shortRecord: ToolCallRecord = { ...bigRecord, resultText: 'цены: 79 990 ₽' }
+check(
+  'однострочная выжимка ссылается на инструмент и его итог',
+  toolResultOneLiner(shortRecord).startsWith('read_url(') &&
+    toolResultOneLiner(shortRecord).includes('79 990 ₽'),
+)
+check(
+  'однострочная выжимка короткая и без переводов строк',
+  toolResultOneLiner(bigRecord).length < 400 && !toolResultOneLiner(bigRecord).includes('\n'),
+)
 
 /* ─────── 8. сводка выпавшей части диалога (задача 04.2) ─────── */
 
@@ -356,34 +432,68 @@ for (let i = 0; i < 6; i += 1) {
 }
 longChat.push(msg('user', 'и последний вопрос'))
 
-const tinyPlan = planHistory(tiny, longChat)
+const tinyPlan = planContext(tiny, longChat)
 check('узкое окно действительно выбрасывает старые сообщения', tinyPlan.dropped.length > 0)
 check('выпавшие сообщения отдаются для сводки', tinyPlan.dropped[0].id === longChat[0].id)
 check('гораздо больше одного сообщения доходит до сводки', tinyPlan.dropped.length > 3)
 
 const upToDate = await prepareSummary({
   settings: tiny,
-  history: longChat,
   summary: {
     text: 'сжато',
     upToMessageId: tinyPlan.dropped[tinyPlan.dropped.length - 1].id,
     covered: tinyPlan.dropped.length,
     updatedAt: 1,
   },
+  plan: tinyPlan,
 })
 check('актуальная сводка зря не пересчитывается', upToDate.created === undefined)
 check('при актуальной сводке она уходит в контекст как есть', upToDate.summary?.text === 'сжато')
 
-const noDrop = await prepareSummary({ settings: tiny, history: [msg('user', 'привет')] })
+const oneMessage = [msg('user', 'привет')]
+const noDrop = await prepareSummary({ settings: tiny, plan: planContext(tiny, oneMessage) })
 check('без выпавших сообщений сводка не создаётся', noDrop.created === undefined && noDrop.dropped.length === 0)
+
+/* ─── один план на сводку и на запрос (этап A «Деградация агента») ─── */
+
+const longSummary: ConversationSummary = {
+  text: 'ранее обсуждали цены и сроки '.repeat(20),
+  upToMessageId: 'msg-old',
+  covered: 4,
+  updatedAt: 1,
+}
+const planPlain = planContext(tiny, longChat)
+const planWithSummary = planContext(tiny, longChat, { summary: longSummary })
+
+check('блок сводки сужает место под историю', planWithSummary.budget < planPlain.budget)
+check('сводка вытесняет из окна ещё сообщения', planWithSummary.dropped.length > planPlain.dropped.length)
+
+const plannedWire = await buildWireMessages(longChat, tiny, { summary: longSummary, plan: planWithSummary })
+const plannedText = plannedWire.map((m) => String(m.content ?? '')).join('\n')
+check(
+  'выпавшие по плану сообщения в запрос не уходят',
+  planWithSummary.dropped.every((m) => !plannedText.includes(m.content)),
+)
+check('оставшееся по плану уходит в модель', planWithSummary.kept.every((m) => plannedText.includes(m.content)))
+check(
+  'в запрос уходит ровно тот блок сводки, по которому считали план',
+  plannedWire.some((m) => m.role === 'system' && m.content === planWithSummary.summaryBlock),
+)
+check(
+  'метр контекста считает выпавшее так же, как план запроса',
+  measureContext(tiny, longChat, { summary: longSummary }).droppedMessages === planWithSummary.dropped.length,
+)
+check('без дополнительного системного блока бюджет не меняется', budgetWithoutExtraSystem(1000) === 1000)
+check('дополнительный системный блок уменьшает бюджет', budgetWithoutExtraSystem(1000, longSummary.text) < 1000)
 
 // Модель недоступна (запрос обрывается сразу) — чат обязан продолжить работу
 const aborted = new AbortController()
 aborted.abort()
+const failSettings: Settings = { ...tiny, baseUrl: 'http://127.0.0.1:9/v1' }
 const failed = await prepareSummary({
-  settings: { ...tiny, baseUrl: 'http://127.0.0.1:9/v1' },
-  history: longChat,
+  settings: failSettings,
   signal: aborted.signal,
+  plan: planContext(failSettings, longChat),
 })
 check('ошибка суммаризации не бросается наружу', failed.error !== undefined && failed.created === undefined)
 check('при ошибке история просто обрезается', failed.dropped.length > 0 && failed.summary === undefined)

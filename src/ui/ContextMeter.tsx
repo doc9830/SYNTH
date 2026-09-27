@@ -5,11 +5,11 @@ import {
   contextPercent,
   estimateTokens,
   formatTokens,
-  measureContext,
   type ContextUsage,
 } from '@/lib/context'
+import { measureContext } from '@/lib/contextPlan'
 import { sanitizeContextWindow, useSettings } from '@/lib/settings'
-import { planToolRounds, toolRoundCost } from '@/lib/toolHistory'
+import { planToolRounds } from '@/lib/toolHistory'
 import { summaryCovers } from '@/lib/contextSummary'
 import { selectStreamPatch, useStreamDraft } from '@/lib/streamDraft'
 import { cn } from '@/lib/utils'
@@ -59,7 +59,14 @@ export function ContextMeter({ messages, summary }: ContextMeterProps) {
     [messages, streamPatch, live],
   )
 
-  const [usage, setUsage] = useState<ContextUsage>(() => measureContext(settings, measured))
+  const [usage, setUsage] = useState<ContextUsage>(() =>
+    // замер считаем тем же планом, что уйдёт в запрос (см. contextPlan.ts):
+    // сводка и развёрнутые tool-раунды тоже занимают место в окне
+    measureContext(settings, measured, {
+      summary,
+      toolHistory: settings.toolHistoryInContext,
+    }),
+  )
 
   /** Стоимость развёрнутых tool-раундов — метр обязан считать как агент. */
   const toolPlan = useMemo(
@@ -73,12 +80,11 @@ export function ContextMeter({ messages, summary }: ContextMeterProps) {
     const measure = () => {
       measuredAt.current = Date.now()
       setUsage(
+        // тот же план, что уходит в запрос: иначе метр показывал бы одно, а
+        // агент отправлял другое
         measureContext(settings, measured, {
-          // планируем заново: функция доплаты не должна попадать в зависимости
-          // эффекта, иначе замер перезапускается на каждом рендере
-          extraCost: settings.toolHistoryInContext
-            ? toolRoundCost(planToolRounds(measured))
-            : undefined,
+          summary,
+          toolHistory: settings.toolHistoryInContext,
         }),
       )
     }
@@ -88,7 +94,7 @@ export function ContextMeter({ messages, summary }: ContextMeterProps) {
     }
     const timer = window.setTimeout(measure, delay)
     return () => window.clearTimeout(timer)
-  }, [settings, measured])
+  }, [settings, measured, summary])
 
   // при открытии шторки подставляем текущее окно в поле «своё значение»
   useEffect(() => {

@@ -31,6 +31,14 @@ export const TOOL_HISTORY_ROUNDS = 3
 /** Сколько символов результата одного вызова попадает в контекст */
 export const TOOL_RESULT_CHARS = 2400
 
+/**
+ * Сколько символов занимает однострочная выжимка результата.
+ * Ею сворачиваются старые результаты, когда запрос внутри хода перерастает
+ * окно (этап B задачи «Деградация агента»): место в окне важнее подробностей,
+ * а полный текст остался в записи сообщения.
+ */
+export const TOOL_RESULT_ONELINE_CHARS = 240
+
 /** Пометка об усечении — по ней видно, что текст неполный */
 export const TRUNCATION_MARK = '…обрезано'
 
@@ -123,6 +131,24 @@ export function toolResultForContext(
   const full = resultTextOf(record)
   if (full.length <= limit) return full
   return `${truncateToolResult(full, limit)}\n${truncatedResultNote(record, full.length)}`
+}
+
+/**
+ * Однострочная выжимка результата: имя, ключевой аргумент, итог.
+ * Нужна прогрессивному сжатию внутри хода (см. `squeezeWire` в agent.ts)
+ * и журналу выполненных вызовов: подробности в окне не помещаются, а факт
+ * «это уже читали, вот итог» обязан остаться.
+ */
+export function toolResultOneLiner(record: ToolCallRecord): string {
+  const args = (record.args ?? '').trim() || '{}'
+  return `${record.name}(${args}) → ${flatten(resultTextOf(record), TOOL_RESULT_ONELINE_CHARS)}`
+}
+
+/** Сжимает пробелы и режет длинный текст: в одну строку и без переводов строк. */
+function flatten(text: string, limit: number): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  if (flat.length <= limit) return flat
+  return `${flat.slice(0, limit)}${TRUNCATION_MARK}`
 }
 
 /** Что инструмент реально вернул модели: текст, иначе сводку, иначе ошибку. */

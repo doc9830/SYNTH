@@ -10,7 +10,7 @@
  * Запуск: npm run checks
  */
 import { useConversations } from '@/lib/conversations'
-import { measureContext } from '@/lib/context'
+import { measureContext } from '@/lib/contextPlan'
 import { DEFAULT_SETTINGS, type Settings } from '@/lib/settings'
 import {
   clearStreamDraft,

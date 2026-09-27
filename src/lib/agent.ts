@@ -1,22 +1,22 @@
 import { chatTurn } from '@/api'
 import { ApiError } from '@/providers/openai'
-import type { WireMessage, WireToolCall } from '@/providers/openai/types'
+import type { WireContentPart, WireMessage, WireToolCall } from '@/providers/openai/types'
 import { buildTools, toolMap, toWireTools, type Tool } from '@/tools/registry'
 import type { ChatMessage, ConversationSummary, TokenUsage, ToolCallRecord } from '@/types'
 import { attachmentDataUrl } from './attachments'
 import type { Settings } from './settings'
 import { debugLog } from './debug'
-import { planHistory } from './context'
-import { summaryBlockFor } from './contextSummary'
+import { IMAGE_TOKENS, MESSAGE_OVERHEAD, estimateTokens, inputBudget } from './context'
+import { planContext, type ContextPlan } from './contextPlan'
 import {
-  planToolRounds,
+  TRUNCATION_MARK,
   toolCallToWire,
   toolResultForContext,
-  toolRoundCost,
+  toolResultOneLiner,
 } from './toolHistory'
 import { getModelCapabilities, prettyJson, uid } from './utils'
 import { buildMemoryContext } from './memory'
-import { isUntrustedEnvelope, wrapUntrusted } from './untrusted'
+import { UNTRUSTED_CLOSE, isUntrustedEnvelope, wrapUntrusted } from './untrusted'
 
 /** Лимит последовательных tool calls, чтобы не уйти в бесконечный цикл. */
 export const MAX_TOOL_ITERATIONS = 8
@@ -111,6 +111,11 @@ export interface WireBuildOptions {
   summary?: ConversationSummary
   /** Разворачивать tool-раунды прошлых ходов; по умолчанию — из настроек */
   toolHistory?: boolean
+  /**
+   * Готовый план контекста (см. contextPlan.ts). Передаётся снаружи, когда
+   * сводка и запрос обязаны считать по одному плану; иначе считается здесь.
+   */
+  plan?: ContextPlan
 }
 
 export async function buildWireMessages(
@@ -134,18 +139,21 @@ export async function buildWireMessages(
     out.push({ role: 'system', content: systemContent })
   }
 
-  // Tool-раунды прошлых ходов (можно выключить в настройках, чтобы сравнить
-  // поведение): сколько их разворачивать и сколько токенов они займут.
-  const rounds =
-    (options.toolHistory ?? settings.toolHistoryInContext) ? planToolRounds(history) : null
+  // План контекста — один на весь ход (см. contextPlan.ts): сколько сообщений
+  // выпадает, во сколько обходятся развёрнутые tool-раунды прошлых ходов и
+  // сколько места занимает блок сводки. Готовый план приходит снаружи, чтобы
+  // суммаризация и запрос считали по одному объекту: разъехавшись, они
+  // выбрасывали сообщения, которых не было в сводке (задача «Деградация агента»).
+  const plan =
+    options.plan ??
+    planContext(settings, history, {
+      summary: options.summary,
+      // «История инструментов» можно выключить в настройках, чтобы сравнить поведение
+      toolHistory: options.toolHistory ?? settings.toolHistoryInContext,
+      systemContent,
+    })
+  const rounds = plan.rounds
 
-  // Окно контекста: история длиннее окна целиком не уходит — часть провайдеров
-  // на переполнении отвечает ошибкой вместо тихой обрезки. Системный промпт и
-  // блок памяти сохраняем всегда, режем только старые сообщения.
-  const plan = planHistory(settings, history, {
-    systemContent,
-    extraCost: rounds ? toolRoundCost(rounds) : undefined,
-  })
   if (plan.droppedMessages > 0) {
     debugLog('info', 'Контекст обрезан по окну', [
       `окно: ${settings.contextWindow} токенов`,
@@ -156,8 +164,7 @@ export async function buildWireMessages(
   }
 
   // Сводка выпавших сообщений — отдельным системным блоком в начале контекста.
-  const summaryBlock = summaryBlockFor(options.summary, plan.kept)
-  if (summaryBlock) out.push({ role: 'system', content: summaryBlock })
+  if (plan.summaryBlock) out.push({ role: 'system', content: plan.summaryBlock })
 
   for (const m of plan.kept) {
     if (m.role === 'assistant') {
@@ -310,6 +317,123 @@ export interface AgentInput {
    * прежний разговор уже в этом ответе.
    */
   summary?: ConversationSummary
+  /**
+   * Готовый план контекста на этот ход (см. contextPlan.ts). Приложение считает
+   * его до хода — по нему же готовится сводка — и передаёт сюда: один план на
+   * весь ход исключает случай «сообщение выпало, но в сводку не попало».
+   */
+  plan?: ContextPlan
+}
+
+/* ───────── Рост запроса внутри хода (этап B задачи «Деградация агента») ───────── */
+
+/**
+ * Оценка размера запроса в токенах: грубо по символам, но этого хватает, чтобы
+ * поймать главную проблему — результат инструмента на сотни килобайт уходит в
+ * модель целиком и переотправляется на каждой следующей итерации.
+ */
+export function wireTokens(wire: WireMessage[]): number {
+  let total = 0
+  for (const message of wire) total += messageWireTokens(message)
+  return total
+}
+
+function messageWireTokens(message: WireMessage): number {
+  let tokens = MESSAGE_OVERHEAD
+  for (const part of wireParts(message)) {
+    if (part.type === 'text') tokens += estimateTokens(part.text)
+    else tokens += IMAGE_TOKENS
+  }
+  for (const call of message.tool_calls ?? []) {
+    tokens += estimateTokens(call.function.name) + estimateTokens(call.function.arguments)
+  }
+  return tokens
+}
+
+/** Части содержимого сообщения: строка — как единственная текстовая часть. */
+function wireParts(message: WireMessage): WireContentPart[] {
+  if (typeof message.content === 'string') return [{ type: 'text', text: message.content }]
+  return message.content ?? []
+}
+
+/** Размер запроса в символах — для журнала: видно, что именно растёт. */
+export function wireChars(wire: WireMessage[]): number {
+  let total = 0
+  for (const message of wire) {
+    for (const part of wireParts(message)) {
+      total += part.type === 'text' ? part.text.length : part.image_url.url.length
+    }
+    for (const call of message.tool_calls ?? []) total += call.function.arguments.length
+  }
+  return total
+}
+
+/** Состав запроса по ролям — компактно, для журнала. */
+export function wireRoleCounts(wire: WireMessage[]): Record<string, number> {
+  const counts: Record<string, number> = {}
+  for (const message of wire) counts[message.role] = (counts[message.role] ?? 0) + 1
+  return counts
+}
+
+/** Бюджет всего запроса: окно минус резерв под ответ. 0 — без ограничения. */
+export function wireBudgetFor(settings: Settings): number {
+  return inputBudget(settings.contextWindow, settings.maxTokens)
+}
+
+/**
+ * Прогрессивное сжатие запроса: старые результаты инструментов сворачиваются в
+ * однострочную выжимку, пока запрос не вернётся в бюджет.
+ *
+ * Чего делать нельзя:
+ *  - разрывать пару `assistant(tool_calls)` + `role="tool"` — провайдер ответит
+ *    400, а пользователь увидит «случайный сбой»; меняется только содержимое
+ *    tool-сообщения, порядок и границы остаются;
+ *  - трогать системные блоки, память и последние сообщения (в том числе
+ *    результаты только что выполненного раунда — они нужны модели, чтобы
+ *    ответить по существу);
+ *  - выбрасывать закрывающий маркер рамки внешних данных — иначе чужой текст
+ *    перестанет читаться как данные, а не как инструкции.
+ *
+ * Возвращает число свёрнутых результатов — для журнала.
+ */
+export function squeezeWire(
+  wire: WireMessage[],
+  budget: number,
+  recordsById: Map<string, ToolCallRecord>,
+): number {
+  if (budget <= 0) return 0
+  const freshFrom = lastToolRoundIndex(wire)
+  let squeezed = 0
+  for (let i = 0; i < freshFrom; i += 1) {
+    if (wireTokens(wire) <= budget) break
+    const message = wire[i]
+    if (message.role !== 'tool') continue
+    const record = message.tool_call_id ? recordsById.get(message.tool_call_id) : undefined
+    if (!record) continue
+    const current = String(message.content ?? '')
+    const oneLine = toolResultOneLiner(record)
+    if (current.length <= oneLine.length) continue
+    message.content = squeezeContent(current, oneLine)
+    squeezed += 1
+  }
+  return squeezed
+}
+
+/** Сжатое содержимое tool-сообщения: рамка внешних данных остаётся на месте. */
+function squeezeContent(current: string, oneLine: string): string {
+  if (!isUntrustedEnvelope(current)) return oneLine
+  const openEnd = current.indexOf('\n')
+  const closeAt = current.indexOf(UNTRUSTED_CLOSE)
+  if (openEnd === -1 || closeAt === -1) return oneLine
+  return [current.slice(0, openEnd), oneLine, current.slice(closeAt)].join('\n')
+}
+
+/** Индекс сообщения ассистента последнего tool-раунда: после него — свежие результаты. */
+function lastToolRoundIndex(wire: WireMessage[]): number {
+  for (let i = wire.length - 1; i >= 0; i -= 1) {
+    if (wire[i].role === 'assistant' && wire[i].tool_calls?.length) return i
+  }
+  return -1
 }
 
 /**
@@ -354,7 +478,10 @@ export async function runAgent(input: AgentInput): Promise<AgentRunResult> {
     assistantPrefix: input.assistantPrefix,
     continuationMode: input.continuationMode,
     summary: input.summary,
+    plan: input.plan,
   })
+  // Записи о вызовах по id вызова: по ним запрос сжимается, когда перерастает окно.
+  const recordsById = new Map<string, ToolCallRecord>()
 
   let content = ''
   let reasoning = ''
@@ -376,6 +503,24 @@ export async function runAgent(input: AgentInput): Promise<AgentRunResult> {
 
   try {
     for (let step = 0; step < MAX_TOOL_ITERATIONS; step += 1) {
+      // Бюджет проверяем по всему запросу, а не только по истории на старте
+      // хода: результаты инструментов накапливаются, и каждая следующая
+      // итерация переотправляет их заново — запрос дорожает с каждым шагом.
+      // Перерос — сворачиваем старые результаты (пары tool-вызовов не рвём).
+      const wireBudget = wireBudgetFor(settings)
+      const squeezed = squeezeWire(wire, wireBudget, recordsById)
+
+      debugLog('request', `Итерация ${step + 1}: запрос`, [
+        {
+          prompt_tokens_prev: usage?.promptTokens,
+          wire_tokens: wireTokens(wire),
+          wire_chars: wireChars(wire),
+          wire_budget: wireBudget,
+          squeezed,
+          roles: wireRoleCounts(wire),
+        },
+      ])
+
       const turn = await chatTurn(settings, {
         messages: wire,
         tools: wireTools.length ? wireTools : undefined,
@@ -413,6 +558,13 @@ export async function runAgent(input: AgentInput): Promise<AgentRunResult> {
           tool_calls: turn.toolCalls.map((c) => c.function.name),
           content_length: turn.content.length,
           usage: turn.usage,
+          // Размер запроса после ответа: если prompt_tokens растёт от итерации к
+          // итерации, причина «тормозит и дорожает» видна сразу (этап G).
+          wire_tokens: wireTokens(wire),
+          wire_chars: wireChars(wire),
+          truncated_results: wire.filter(
+            (m) => m.role === 'tool' && String(m.content ?? '').includes(TRUNCATION_MARK),
+          ).length,
         },
       ])
 
@@ -450,7 +602,16 @@ export async function runAgent(input: AgentInput): Promise<AgentRunResult> {
         }
 
         callbacks.onTools([...records])
-        wire.push({ role: 'tool', tool_call_id: call.id, content: resultText })
+        recordsById.set(call.id || record.id, record)
+        wire.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          // Усечение применяем сразу, а не при пересборке контекста в следующих
+          // ходах: иначе полный результат инструмента (страница на сотни
+          // килобайт) уходит в модель целиком и переотправляется на каждой
+          // итерации. Полный текст остался в записи сообщения (IndexedDB).
+          content: toolResultForContext({ ...record, resultText }),
+        })
       }
 
       if (step === MAX_TOOL_ITERATIONS - 1) {

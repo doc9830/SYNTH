@@ -18,7 +18,7 @@ import type { Settings } from './settings'
  */
 
 /** Накладные расходы на одно сообщение (роль, разделители). */
-const MESSAGE_OVERHEAD = 4
+export const MESSAGE_OVERHEAD = 4
 /** Оценка стоимости одной картинки во входе (база + тайлы, как считает OpenAI). */
 export const IMAGE_TOKENS = 850
 /** Минимальный бюджет истории: даже с крошечным окном последнее сообщение уходит. */
@@ -113,6 +113,19 @@ export function historyBudgetFor(settings: Settings, systemContent: string): num
   return Math.max(MIN_HISTORY_BUDGET, budget - MESSAGE_OVERHEAD - estimateTokens(systemContent))
 }
 
+/**
+ * Бюджет истории за вычетом дополнительного системного блока.
+ *
+ * Нужен сводке: её блок уходит в запрос отдельным системным сообщением, и
+ * обрезка обязана его учитывать — иначе запрос выходит за окно ровно на
+ * размер сводки, а план «выпавших» сообщений расходится с фактом.
+ */
+export function budgetWithoutExtraSystem(budget: number, extraSystem?: string): number {
+  const extra = extraSystem?.trim()
+  if (!extra || budget <= 0) return budget
+  return Math.max(MIN_HISTORY_BUDGET, budget - MESSAGE_OVERHEAD - estimateTokens(extra))
+}
+
 export interface TrimResult {
   /** История, которая влезает в бюджет */
   history: ChatMessage[]
@@ -185,20 +198,13 @@ export interface ContextUsage {
   exact?: number
 }
 
-function lastPromptTokens(history: ChatMessage[]): number | undefined {
+/** prompt_tokens последнего ответа провайдера — точное измерение, если есть. */
+export function lastPromptTokens(history: ChatMessage[]): number | undefined {
   for (let i = history.length - 1; i >= 0; i -= 1) {
     const tokens = history[i].usage?.promptTokens
     if (tokens && tokens > 0) return tokens
   }
   return undefined
-}
-
-/** Системная часть запроса: системный промпт + блок долговременной памяти. */
-function systemTokens(settings: Settings, history: ChatMessage[]): number {
-  const lastUser = [...history].reverse().find((m) => m.role === 'user')
-  // track: false — замер из интерфейса не должен накручивать статистику памяти
-  const memoryBlock = buildMemoryContext(settings, lastUser?.content ?? '', { track: false })
-  return MESSAGE_OVERHEAD + estimateTokens(settings.systemPrompt) + estimateTokens(memoryBlock)
 }
 
 /**
@@ -212,6 +218,10 @@ function systemTokens(settings: Settings, history: ChatMessage[]): number {
  * Считает по тем же правилам, что и сам запрос, поэтому вызывающие обязаны
  * передать тот же `systemContent`: у агента он собран с учётом статистики
  * памяти (track: true), у плана — без неё.
+ *
+ * Потребители обычно не зовут эту функцию напрямую, а берут готовый план из
+ * `planContext` (lib/contextPlan.ts) — там же собираются все надбавки, из-за
+ * которых раньше планы расходились.
  */
 export interface HistoryPlan {
   /** Системная часть запроса (промпт + память) */
@@ -229,7 +239,7 @@ export interface HistoryPlan {
 export function planHistory(
   settings: Settings,
   history: ChatMessage[],
-  options: { systemContent?: string; extraCost?: MessageCost } = {},
+  options: { systemContent?: string; extraCost?: MessageCost; extraSystem?: string } = {},
 ): HistoryPlan {
   const lastUser = [...history].reverse().find((m) => m.role === 'user')
   // track: false — план не должен накручивать статистику памяти
@@ -238,7 +248,7 @@ export function planHistory(
     options.systemContent ??
     [settings.systemPrompt.trim(), memoryBlock].filter(Boolean).join('\n\n')
 
-  const budget = historyBudgetFor(settings, systemContent)
+  const budget = budgetWithoutExtraSystem(historyBudgetFor(settings, systemContent), options.extraSystem)
   const trimmed =
     budget > 0
       ? trimHistory(history, budget, options.extraCost)
@@ -256,45 +266,10 @@ export function planHistory(
 
 
 /**
- * Замер контекста для текущего диалога: сколько токенов уйдёт в следующий
- * запрос, сколько всего накопилось и сколько сообщений срежет окно.
- * Считает по тем же правилам, что и агент (см. buildWireMessages).
- *
- * `options.cost` — доплата за развёрнутые tool-раунды (см. MessageCost):
- * метр контекста в шапке подставляет то же, что уйдёт в запрос на самом деле.
+ * Замер контекста для шапки и шторки «Контекст» переехал в plan-based вид:
+ * см. `measureContext` в src/lib/contextPlan.ts — он считает по тому же плану,
+ * что уходит в запрос, поэтому цифры совпадают с агентом.
  */
-export function measureContext(
-  settings: Settings,
-  history: ChatMessage[],
-  options: { extraCost?: MessageCost } = {},
-): ContextUsage {
-  const limit = settings.contextWindow
-  const budget = inputBudget(limit, settings.maxTokens)
-  const system = systemTokens(settings, history)
-  const cost = options.extraCost
-  const extra = cost ? history.reduce((sum, message) => sum + cost(message), 0) : 0
-  const full = system + historyTokens(history) + extra
-  const exact = lastPromptTokens(history)
-
-  if (limit <= 0) {
-    return { used: full, limit: 0, budget: 0, full, droppedMessages: 0, droppedTokens: 0, exact }
-  }
-
-  const historyBudget = Math.max(MIN_HISTORY_BUDGET, budget - system)
-  const trimmed = trimHistory(history, historyBudget, cost)
-  const keptExtra = cost ? trimmed.history.reduce((sum, message) => sum + cost(message), 0) : 0
-  const used = system + historyTokens(trimmed.history) + keptExtra
-
-  return {
-    used,
-    limit,
-    budget,
-    full,
-    droppedMessages: trimmed.droppedMessages,
-    droppedTokens: trimmed.droppedMessages ? full - used : 0,
-    exact,
-  }
-}
 
 /** Заполнение окна в процентах (0…100). Без ограничения — 0. */
 export function contextPercent(used: number, limit: number): number {

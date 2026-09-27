@@ -20,7 +20,7 @@
  */
 import { chatOnce, type WireMessages } from '@/api'
 import type { ChatMessage, ConversationSummary } from '@/types'
-import { planHistory } from './context'
+import type { HistoryPlan } from './context'
 import { debugLog } from './debug'
 import type { Settings } from './settings'
 import { resultTextOf } from './toolHistory'
@@ -230,17 +230,23 @@ export interface SummaryPrep {
  * ещё нет, — сжимает их ДО отправки запроса, чтобы модель помнила разговор уже
  * в этом ответе.
  *
+ * План контекста приходит снаружи (см. `planContext`): сводка обязана считать
+ * выпавшими ровно те сообщения, которые отбросит запрос. Раньше она считала
+ * план сама — без надбавки за tool-раунды и без учёта собственного блока, —
+ * и часть разговора исчезала без следа в сводке (этап A задачи «Деградация
+ * агента»). Теперь у сводки и у запроса буквально один и тот же план.
+ *
  * Ошибка суммаризации наружу не бросается: чат важнее. Возвращаем прежнюю
  * сводку и причину — вызывающий пишет её в лог и продолжает ход.
  */
 export async function prepareSummary(input: {
   settings: Settings
-  history: ChatMessage[]
   summary?: ConversationSummary
   signal?: AbortSignal
+  /** План контекста на этот ход — тот же, по которому строится запрос */
+  plan: HistoryPlan
 }): Promise<SummaryPrep> {
-  const plan = planHistory(input.settings, input.history)
-  const dropped = plan.dropped
+  const dropped = input.plan.dropped
   if (!dropped.length) return { summary: input.summary, dropped }
 
   const fresh = dropCovered(dropped, input.summary)

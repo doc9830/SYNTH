@@ -10,6 +10,7 @@ import {
   type ContinuationMode,
 } from './agent'
 import { persistStreamSnapshot, useConversations } from './conversations'
+import { planContext } from './contextPlan'
 import { prepareSummary } from './contextSummary'
 import { autoExtractMemories, parseRememberCommand, remember, shouldExtract } from './memory'
 import { getSettings, type Settings } from './settings'
@@ -17,6 +18,12 @@ import { clearStreamDraft, publishStreamDraft } from './streamDraft'
 import { notify } from './toast'
 import { uid } from './utils'
 import { debugLog } from './debug'
+
+/**
+ * Сколько раз за ход дожимаем сводку, если она сама вытесняет из окна ещё
+ * несколько сообщений: сводка занимает место, а сжатие идёт по её итогу.
+ */
+const SUMMARY_PASSES = 3
 
 interface AssistantDraft {
   content: string
@@ -170,26 +177,42 @@ export function useChat() {
   }, [])
 
   /**
-   * Сводка выпадающей части диалога для текущего хода (задача 04.2).
+   * Сводка выпадающей части диалога и план контекста на текущий ход.
    *
    * Считается ДО запроса: сообщения, которые окно вот-вот выбросит, сжимаются
    * в короткий текст отдельным дешёвым запросом, и модель помнит разговор уже
-   * в этом ответе. Ошибка суммаризации чат не ломает — возвращаем прежнюю
-   * сводку, история просто обрезается, как раньше (см. prepareSummary).
+   * в этом ответе. План контекста считается здесь же — один раз на ход — и
+   * уходит и в сводку, и в запрос: разъехавшись, они молча выбрасывали
+   * сообщения, которых не было в сводке (этап A задачи «Деградация агента»).
+   *
+   * Сводка сама занимает место в окне, поэтому после её обновления план
+   * считается заново: сообщения, выпавшие из-за сводки, тоже сжимаются.
+   * Проходов не больше SUMMARY_PASSES — иначе сводка росла бы бесконечно.
+   *
+   * Ошибка суммаризации чат не ломает: ход продолжается с прежней сводкой,
+   * история просто обрезается, как раньше (см. prepareSummary).
    */
   const ensureSummary = useCallback(
     async (conversationId: string, history: ChatMessage[], signal: AbortSignal) => {
       const store = useConversations.getState()
-      const summary = store.conversations.find((c) => c.id === conversationId)?.summary
-      const prep = await prepareSummary({ settings: getSettings(), history, summary, signal })
-      if (prep.error) {
-        debugLog('error', 'Сводка: ход продолжается без обновления сводки', [prep.error])
-      }
-      if (prep.created) {
+      const settings: Settings = getSettings()
+      const options = { toolHistory: settings.toolHistoryInContext }
+      let summary = store.conversations.find((c) => c.id === conversationId)?.summary
+      let plan = planContext(settings, history, { ...options, summary })
+
+      for (let pass = 0; pass < SUMMARY_PASSES; pass += 1) {
+        const prep = await prepareSummary({ settings, summary, signal, plan })
+        if (prep.error) {
+          debugLog('error', 'Сводка: ход продолжается без обновления сводки', [prep.error])
+        }
+        if (!prep.created) break
+        summary = prep.summary
         // immediate: сводка должна пережить закрытие приложения сразу же
         store.patchConversation(conversationId, { summary: prep.created }, true)
+        plan = planContext(settings, history, { ...options, summary })
       }
-      return prep.summary
+
+      return { summary, plan }
     },
     [],
   )
@@ -236,9 +259,10 @@ export function useChat() {
       }
 
       let mode: ContinuationMode | undefined = prefix ? continuationModeFor(settings) : undefined
-      // Сводка выпадающей части диалога — до запроса, чтобы модель помнила
-      // прежний разговор уже в этом ответе (задача 04.2).
-      const summary = await ensureSummary(conversationId, history, controller.signal)
+      // Сводка и план контекста — до запроса: модель помнит прежний разговор
+      // уже в этом ответе, а запрос и сводка считают по одному плану
+      // (задача 04.2, этап A задачи «Деградация агента»).
+      const { summary, plan } = await ensureSummary(conversationId, history, controller.signal)
       let result = await runAgent({
         history,
         settings,
@@ -247,6 +271,7 @@ export function useChat() {
         assistantPrefix: prefix || undefined,
         continuationMode: mode,
         summary,
+        plan,
       })
 
       // Сервер не принял сообщение ассистента последним (400 «должно быть
@@ -280,6 +305,7 @@ export function useChat() {
           assistantPrefix: prefix,
           continuationMode: mode,
           summary,
+          plan,
         })
       }
 

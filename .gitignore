@@ -1,0 +1,41 @@
+node_modules
+dist
+dist-ssr
+dev-dist
+*.local
+
+# секреты: никогда не коммитим ключи
+.env
+.env.*
+!.env.example
+
+# debug/логи
+*.log
+npm-debug.log*
+.vite
+
+# артефакты сборки TypeScript (tsc -b)
+*.tsbuildinfo
+
+# OS/IDE
+.DS_Store
+.idea
+.vscode/*
+!.vscode/extensions.json
+
+# Android (Capacitor): артефакты сборки и локальные пути/ключи
+android/.gradle
+android/build
+android/app/build
+android/local.properties
+android/keystore.properties
+android/app/release
+android/app/src/main/assets/public
+*.jks
+*.keystore
+*.apk
+.capacitor
+
+
+# личные заметки/черновики (не публикуем)
+start.md

@@ -1,0 +1,781 @@
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { readPage, searchWeb } from '@/api'
+import { APP_NAME, APP_TAGLINE, APP_VERSION, RELEASES_URL } from '@/lib/appInfo'
+import { estimateStorage } from '@/lib/db'
+import { useModelCatalog } from '@/lib/modelCatalog'
+import { PROVIDER_PRESETS, presetById } from '@/lib/providerPresets'
+import { getReadiness } from '@/lib/readiness'
+import { useSettings } from '@/lib/settings'
+import { notify } from '@/lib/toast'
+import { useUpdateStore } from '@/lib/updateStore'
+import { cn } from '@/lib/utils'
+import { useConversations } from '@/lib/conversations'
+import { KEYLESS_ENGINE_LABELS } from '@/providers/search'
+import type { KeylessEngine } from '@/types'
+import { IconAlert, IconBug, IconCheck, IconDownload, IconRefresh, IconTrash, IconX } from './icons'
+import { ModelSelect } from './ModelSelect'
+
+const inputCls =
+  'w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100'
+
+const btnCls =
+  'inline-flex items-center gap-1.5 rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800'
+
+function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-300">{label}</span>
+      {children}
+      {hint && <span className="mt-1 block text-[11px] text-slate-500 dark:text-slate-400">{hint}</span>}
+    </label>
+  )
+}
+
+function Toggle({
+  label,
+  hint,
+  checked,
+  onChange,
+}: {
+  label: string
+  hint?: string
+  checked: boolean
+  onChange: (v: boolean) => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!checked)}
+      className="flex w-full items-center justify-between gap-3 rounded-xl px-1 py-1.5 text-left"
+    >
+      <span>
+        <span className="block text-sm text-slate-800 dark:text-slate-100">{label}</span>
+        {hint && <span className="block text-[11px] text-slate-500 dark:text-slate-400">{hint}</span>}
+      </span>
+      <span
+        className={cn(
+          'relative h-5 w-9 shrink-0 rounded-full transition',
+          checked ? 'bg-blue-600' : 'bg-slate-300 dark:bg-slate-700',
+        )}
+      >
+        <span
+          className={cn(
+            'absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all',
+            checked ? 'left-4.5' : 'left-0.5',
+          )}
+        />
+      </span>
+    </button>
+  )
+}
+
+function Segmented<T extends string>({
+  value,
+  options,
+  onChange,
+}: {
+  value: T
+  options: Array<{ value: T; label: string }>
+  onChange: (v: T) => void
+}) {
+  return (
+    <div className="flex gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          onClick={() => onChange(o.value)}
+          className={cn(
+            'flex-1 rounded-lg px-2 py-1.5 text-xs transition',
+            value === o.value
+              ? 'bg-white font-medium text-slate-900 shadow-sm dark:bg-slate-900 dark:text-white'
+              : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white',
+          )}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+const TABS = [
+  { id: 'api', label: 'API' },
+  { id: 'search', label: 'Web Search' },
+  { id: 'image', label: 'Изображения' },
+  { id: 'ui', label: 'Интерфейс' },
+  { id: 'data', label: 'Данные' },
+] as const
+
+type TabId = (typeof TABS)[number]['id']
+
+interface SettingsDialogProps {
+  open: boolean
+  onClose: () => void
+  onOpenDebug: () => void
+}
+
+export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogProps) {
+  const settings = useSettings((s) => s.settings)
+  const update = useSettings((s) => s.update)
+  const updateSection = useSettings((s) => s.updateSection)
+  const reset = useSettings((s) => s.reset)
+  const deleteAll = useConversations((s) => s.deleteAll)
+
+  const [tab, setTab] = useState<TabId>('api')
+  const [checking, setChecking] = useState(false)
+  const [searchTesting, setSearchTesting] = useState(false)
+  const [searchTest, setSearchTest] = useState<string | null>(null)
+  const [pageUrl, setPageUrl] = useState('')
+  const [pageTesting, setPageTesting] = useState(false)
+  const [pageTest, setPageTest] = useState<string | null>(null)
+  const [pageShot, setPageShot] = useState<string | null>(null)
+  const [storage, setStorage] = useState<{ usage: number; quota: number } | null>(null)
+  const ensureModels = useModelCatalog((s) => s.ensure)
+  const refreshModels = useModelCatalog((s) => s.refresh)
+  const checkUpdates = useUpdateStore((s) => s.check)
+  const updateChecking = useUpdateStore((s) => s.checking)
+
+  const readiness = useMemo(() => getReadiness(settings), [settings])
+
+  // список моделей подтягиваем при открытии настроек — пользователю не нужно жать «Список»
+  useEffect(() => {
+    if (!open) return
+    ensureModels('chat')
+    ensureModels('image')
+  }, [open, ensureModels])
+
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+
+  useEffect(() => {
+    if (!open || tab !== 'data') return
+    void estimateStorage().then(setStorage)
+  }, [open, tab])
+
+  if (!open) return null
+
+  const checkConnection = async () => {
+    setChecking(true)
+    try {
+      const list = await refreshModels('chat', { force: true })
+      notify(
+        list.length
+          ? `Подключение работает. Доступно моделей: ${list.length}`
+          : 'Подключение работает, но список моделей пуст',
+        'success',
+      )
+    } catch (err) {
+      notify(err instanceof Error ? err.message : String(err), 'error')
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  const testSearch = async () => {
+    setSearchTesting(true)
+    setSearchTest(null)
+    try {
+      const results = await searchWeb('новости технологий за сегодня', settings)
+      const first = results[0]
+      const text = results.length
+        ? `Найдено источников: ${results.length} · движок: ${first?.source ?? '—'} · ${first?.title ?? ''}`
+        : 'Поиск ответил, но ничего не нашёл. Попробуйте другой движок или запрос.'
+      setSearchTest(text)
+      notify(
+        results.length ? `Поиск работает: ${results.length} источников` : text,
+        results.length ? 'success' : 'info',
+      )
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      setSearchTest(message)
+      notify(message, 'error')
+    } finally {
+      setSearchTesting(false)
+    }
+  }
+
+  const testPage = async () => {
+    const url = pageUrl.trim() || 'https://example.com'
+    setPageTesting(true)
+    setPageTest(null)
+    setPageShot(null)
+    try {
+      const page = await readPage(url, settings, { screenshot: true })
+      const shot = page.screenshot
+      const kb = shot ? Math.max(1, Math.round(shot.bytes / 1024)) : 0
+      setPageTest(
+        [
+          page.title ? `«${page.title}»` : 'заголовок не найден',
+          `текст ${page.text.length} симв.`,
+          `рендер: ${page.engine === 'chrome' ? 'Chrome' : 'статический HTML'}`,
+          shot ? `скриншот ${shot.width}×${shot.height}, ${kb} КБ` : 'без скриншота',
+          page.warnings.length ? `замечания: ${page.warnings.join('; ')}` : '',
+        ]
+          .filter(Boolean)
+          .join(' · '),
+      )
+      setPageShot(shot?.dataUrl ?? null)
+      notify(shot ? 'Страница прочитана, скриншот получен' : 'Страница прочитана, но без скриншота', shot ? 'success' : 'info')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      setPageTest(message)
+      notify(message, 'error')
+    } finally {
+      setPageTesting(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 backdrop-blur-sm sm:items-center sm:p-4"
+      onClick={onClose}
+      role="presentation"
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Настройки"
+        onClick={(e) => e.stopPropagation()}
+        className="flex h-[100dvh] w-full flex-col overflow-hidden rounded-none border-slate-200 bg-white shadow-2xl sm:h-[86vh] sm:max-w-2xl sm:rounded-2xl sm:border dark:border-slate-700 dark:bg-slate-900"
+      >
+        <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] dark:border-slate-800">
+          <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">Настройки</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="-mr-1 rounded-xl p-2 text-slate-500 transition hover:bg-slate-100 active:bg-slate-200 dark:text-slate-300 dark:hover:bg-slate-800"
+            aria-label="Закрыть настройки"
+          >
+            <IconX size={18} />
+          </button>
+        </div>
+
+        <div className="flex gap-1 overflow-x-auto border-b border-slate-200 px-2 py-2 dark:border-slate-800">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setTab(t.id)}
+              className={cn(
+                'min-h-9 shrink-0 rounded-xl px-3.5 py-2 text-sm transition active:opacity-80',
+                tab === t.id
+                  ? 'bg-blue-600 font-medium text-white'
+                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800',
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+          {readiness.issues.length > 0 && (
+            <ul className="space-y-2">
+              {readiness.issues.map((issue) => (
+                <li
+                  key={`${issue.scope}-${issue.message}`}
+                  className={cn(
+                    'flex gap-2 rounded-xl border px-3 py-2 text-xs',
+                    issue.severity === 'error'
+                      ? 'border-red-300 bg-red-50 text-red-900 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-100'
+                      : 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100',
+                  )}
+                >
+                  <IconAlert size={15} />
+                  <span>
+                    <span className="block">{issue.message}</span>
+                    <span className="mt-0.5 block opacity-80">{issue.fix}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {tab === 'api' && (
+            <>
+              <Field
+                label="Режим подключения"
+                hint="direct — браузер обращается к API провайдера напрямую (ключ хранится только в браузере). proxy — запросы идут через локальный backend, ключ лежит в .env на сервере."
+              >
+                <Segmented
+                  value={settings.mode}
+                  onChange={(mode) => update({ mode })}
+                  options={[
+                    { value: 'direct', label: 'direct (браузер → API)' },
+                    { value: 'proxy', label: 'proxy (через backend)' },
+                  ]}
+                />
+              </Field>
+
+              <Field
+                label="Провайдер"
+                hint="Пресет подставит адрес API. SYNTH работает с любым OpenAI-совместимым провайдером — выберите «Другой / свой адрес», чтобы ввести Base URL вручную."
+              >
+                <select
+                  value={settings.providerId}
+                  onChange={(e) => {
+                    const preset = presetById(e.target.value)
+                    update({
+                      providerId: e.target.value,
+                      ...(preset && preset.baseUrl ? { baseUrl: preset.baseUrl } : {}),
+                    })
+                  }}
+                  className={inputCls}
+                >
+                  {PROVIDER_PRESETS.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field
+                label="Base URL"
+                hint={
+                  settings.mode === 'proxy'
+                    ? 'В proxy-режиме адрес задаётся на сервере (PROVIDER_BASE_URL в .env).'
+                    : 'Адрес API вместе с версией — обычно оканчивается на /v1.'
+                }
+              >
+                <input
+                  value={settings.baseUrl}
+                  disabled={settings.mode === 'proxy'}
+                  onChange={(e) => update({ baseUrl: e.target.value })}
+                  placeholder="https://api.openai.com/v1"
+                  className={cn(inputCls, settings.mode === 'proxy' && 'opacity-60')}
+                  spellCheck={false}
+                />
+              </Field>
+
+              <Field
+                label="API key"
+                hint={
+                  settings.mode === 'proxy'
+                    ? 'Можно оставить пустым — backend возьмёт PROVIDER_API_KEY из .env. Если заполнить, ключ уйдёт на backend в заголовке x-provider-key.'
+                    : 'Ключ хранится только в этом браузере (localStorage) и не попадает в Git.'
+                }
+              >
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    value={settings.apiKey}
+                    onChange={(e) => update({ apiKey: e.target.value })}
+                    placeholder={settings.mode === 'proxy' ? 'необязательно' : 'sk-…'}
+                    className={inputCls}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <button type="button" onClick={checkConnection} disabled={checking} className={btnCls}>
+                    {checking ? (
+                      <IconRefresh size={15} className="animate-spin" />
+                    ) : (
+                      <IconCheck size={15} />
+                    )}
+                    Проверить
+                  </button>
+                </div>
+              </Field>
+
+              <Field
+                label="Model"
+                hint="Список берётся из GET /v1/models настроенного подключения: выберите модель из списка или задайте id вручную."
+              >
+                <ModelSelect kind="chat" value={settings.model} onChange={(model) => update({ model })} />
+              </Field>
+
+              <Field label="System prompt" hint="Добавляется в начало каждого диалога. Можно оставить пустым.">
+                <textarea
+                  value={settings.systemPrompt}
+                  onChange={(e) => update({ systemPrompt: e.target.value })}
+                  rows={3}
+                  placeholder="Например: отвечай кратко и по делу, используй markdown."
+                  className={cn(inputCls, 'resize-y')}
+                />
+              </Field>
+
+              <Field label={`Temperature: ${settings.temperature.toFixed(2)}`}>
+                <input
+                  type="range"
+                  min={0}
+                  max={2}
+                  step={0.05}
+                  value={settings.temperature}
+                  onChange={(e) => update({ temperature: Number(e.target.value) })}
+                  className="w-full accent-blue-600"
+                />
+              </Field>
+
+              <Field label="Max tokens" hint="Пусто — параметр не отправляется, лимит определяет провайдер.">
+                <input
+                  type="number"
+                  min={1}
+                  value={settings.maxTokens ?? ''}
+                  onChange={(e) =>
+                    update({ maxTokens: e.target.value ? Number(e.target.value) : null })
+                  }
+                  placeholder="без ограничения"
+                  className={inputCls}
+                />
+              </Field>
+            </>
+          )}
+
+          {tab === 'search' && (
+            <>
+              <Toggle
+                label="Web search включён"
+                hint="Модель получает инструмент web_search и сама решает, когда искать."
+                checked={settings.search.enabled}
+                onChange={(enabled) => updateSection('search', { enabled })}
+              />
+              <Field
+                label="Провайдер"
+                hint="По умолчанию — бесплатный поиск: без ключей и регистрации. Tavily, Brave и SearXNG оставлены как опция."
+              >
+                <select
+                  value={settings.search.provider}
+                  onChange={(e) =>
+                    updateSection('search', {
+                      provider: e.target.value as typeof settings.search.provider,
+                    })
+                  }
+                  className={inputCls}
+                >
+                  <option value="keyless">Без API-ключа (Bing · DuckDuckGo · Wikipedia)</option>
+                  <option value="tavily">Tavily (нужен API key)</option>
+                  <option value="brave">Brave Search (нужен API key)</option>
+                  <option value="searxng">SearXNG (self-hosted)</option>
+                </select>
+              </Field>
+
+              {settings.search.provider === 'keyless' && (
+                <>
+                  <Field
+                    label="Движок"
+                    hint="«Авто» перебирает движки по порядку, пока не получит результат."
+                  >
+                    <select
+                      value={settings.search.engine}
+                      onChange={(e) =>
+                        updateSection('search', { engine: e.target.value as KeylessEngine })
+                      }
+                      className={inputCls}
+                    >
+                      {(Object.keys(KEYLESS_ENGINE_LABELS) as KeylessEngine[]).map((id) => (
+                        <option key={id} value={id}>
+                          {KEYLESS_ENGINE_LABELS[id]}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <p className="rounded-xl bg-slate-100 px-3 py-2 text-[11px] leading-relaxed text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
+                    API key не нужен. Bing и DuckDuckGo не отдают CORS-заголовки браузеру, поэтому
+                    поиск выполняет ваш backend (
+                    <code className="rounded bg-white px-1 dark:bg-slate-900">/api/search</code>) —
+                    держите запущенным{' '}
+                    <code className="rounded bg-white px-1 dark:bg-slate-900">npm run dev:api</code>.
+                  </p>
+                </>
+              )}
+
+              {settings.search.provider === 'searxng' ? (
+                <Field
+                  label="Base URL SearXNG"
+                  hint="Например, http://localhost:8080. Инстанс должен разрешать CORS или используйте proxy-режим."
+                >
+                  <input
+                    value={settings.search.baseUrl}
+                    onChange={(e) => updateSection('search', { baseUrl: e.target.value })}
+                    placeholder="http://localhost:8080"
+                    className={inputCls}
+                    spellCheck={false}
+                  />
+                </Field>
+              ) : settings.search.provider !== 'keyless' ? (
+                <Field
+                  label="API key поиска"
+                  hint={
+                    settings.mode === 'proxy'
+                      ? 'Можно оставить пустым: backend возьмёт TAVILY_API_KEY / BRAVE_API_KEY из .env.'
+                      : 'Хранится локально в браузере. Провайдер должен разрешать CORS-запросы.'
+                  }
+                >
+                  <input
+                    type="password"
+                    value={settings.search.apiKey}
+                    onChange={(e) => updateSection('search', { apiKey: e.target.value })}
+                    placeholder={settings.mode === 'proxy' ? 'необязательно' : 'ключ провайдера'}
+                    className={inputCls}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </Field>
+              ) : null}
+
+              {settings.mode === 'direct' && (
+                <Field
+                  label="Backend URL для поиска"
+                  hint="Пусто = /api/search текущего сайта. Укажите http://localhost:8787, если фронтенд открыт не с backend-хоста (например, телефон в LAN)."
+                >
+                  <input
+                    value={settings.search.backendUrl}
+                    onChange={(e) => updateSection('search', { backendUrl: e.target.value })}
+                    placeholder="/api/search"
+                    className={inputCls}
+                    spellCheck={false}
+                  />
+                </Field>
+              )}
+
+              <Field label={`Результатов на запрос: ${settings.search.maxResults}`}>
+                <input
+                  type="range"
+                  min={1}
+                  max={10}
+                  step={1}
+                  value={settings.search.maxResults}
+                  onChange={(e) => updateSection('search', { maxResults: Number(e.target.value) })}
+                  className="w-full accent-blue-600"
+                />
+              </Field>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" className={btnCls} onClick={testSearch} disabled={searchTesting}>
+                  {searchTesting ? <IconRefresh className="animate-spin" /> : null}
+                  Проверить поиск
+                </button>
+                {searchTest && (
+                  <span className="text-[11px] text-slate-600 dark:text-slate-300">{searchTest}</span>
+                )}
+              </div>
+
+              <hr className="my-1 border-slate-200 dark:border-slate-800" />
+
+              <Toggle
+                label="Читать присланные ссылки (read_url)"
+                hint="Модель получает инструмент read_url: открывает присланную ссылку, забирает текст, заголовки, ссылки, картинки и дизайн, а также показывает скриншот страницы. Нужен backend, для скриншотов — Chrome/Chromium."
+                checked={settings.search.readPages}
+                onChange={(readPages) => updateSection('search', { readPages })}
+              />
+
+              {settings.search.readPages && (
+                <>
+                  <Field
+                    label="Проверить чтение страницы"
+                    hint="Запрос идёт на backend (POST /api/page): он рендерит страницу и делает скриншот. Пусто = example.com."
+                  >
+                    <input
+                      value={pageUrl}
+                      onChange={(e) => setPageUrl(e.target.value)}
+                      placeholder="https://example.com"
+                      className={inputCls}
+                      spellCheck={false}
+                    />
+                  </Field>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button type="button" className={btnCls} onClick={testPage} disabled={pageTesting}>
+                      {pageTesting ? <IconRefresh className="animate-spin" /> : null}
+                      Открыть страницу
+                    </button>
+                    {pageTest && (
+                      <span className="text-[11px] text-slate-600 dark:text-slate-300">{pageTest}</span>
+                    )}
+                  </div>
+                  {pageShot && (
+                    <img
+                      src={pageShot}
+                      alt="Скриншот прочитанной страницы"
+                      className="max-h-64 w-auto rounded-xl border border-slate-200 dark:border-slate-700"
+                    />
+                  )}
+                </>
+              )}
+            </>
+          )}
+
+          {tab === 'image' && (
+            <>
+              <Toggle
+                label="Генерация изображений включена"
+                hint="Модель получает инструмент generate_image и может рисовать по запросу."
+                checked={settings.image.enabled}
+                onChange={(enabled) => updateSection('image', { enabled })}
+              />
+              <Field
+                label="Способ генерации"
+                hint="Images API — POST /v1/images/generations (gpt-image-1, dall-e-3, flux). Chat-based — модель рисует прямо в диалоге через /v1/chat/completions (Gemini Image, nano-banana)."
+              >
+                <select
+                  value={settings.image.provider}
+                  onChange={(e) =>
+                    updateSection('image', {
+                      provider: e.target.value as typeof settings.image.provider,
+                    })
+                  }
+                  className={inputCls}
+                >
+                  <option value="images-api">Images API (/v1/images/generations)</option>
+                  <option value="chat-image">Chat-based (модель рисует в диалоге)</option>
+                </select>
+              </Field>
+              <Field
+                label="Модель генерации"
+                hint="Список берётся из того же /v1/models: по умолчанию показаны только «рисующие» модели, остальные можно включить галочкой."
+              >
+                <ModelSelect
+                  kind="image"
+                  value={settings.image.model}
+                  onChange={(model) => updateSection('image', { model })}
+                />
+              </Field>
+              <Field label="Размер">
+                <input
+                  value={settings.image.size}
+                  onChange={(e) => updateSection('image', { size: e.target.value })}
+                  placeholder="1024x1024"
+                  className={inputCls}
+                  spellCheck={false}
+                />
+              </Field>
+              <Field label="Качество">
+                <Segmented
+                  value={settings.image.quality}
+                  onChange={(quality) => updateSection('image', { quality })}
+                  options={[
+                    { value: 'low', label: 'low' },
+                    { value: 'medium', label: 'medium' },
+                    { value: 'high', label: 'high' },
+                  ]}
+                />
+              </Field>
+            </>
+          )}
+
+          {tab === 'ui' && (
+            <>
+              <Field label="Тема">
+                <Segmented
+                  value={settings.ui.theme}
+                  onChange={(theme) => updateSection('ui', { theme })}
+                  options={[
+                    { value: 'system', label: 'Как в системе' },
+                    { value: 'light', label: 'Светлая' },
+                    { value: 'dark', label: 'Тёмная' },
+                  ]}
+                />
+              </Field>
+              <Field label="Размер шрифта">
+                <Segmented
+                  value={settings.ui.fontSize}
+                  onChange={(fontSize) => updateSection('ui', { fontSize })}
+                  options={[
+                    { value: 'sm', label: 'Меньше' },
+                    { value: 'md', label: 'Обычный' },
+                    { value: 'lg', label: 'Больше' },
+                  ]}
+                />
+              </Field>
+              <div className="space-y-1 rounded-xl border border-slate-200 px-3 py-2 dark:border-slate-800">
+                <Toggle
+                  label="Показывать reasoning"
+                  hint="Блок «Размышления» над ответом, если модель его вернула."
+                  checked={settings.ui.showReasoning}
+                  onChange={(showReasoning) => updateSection('ui', { showReasoning })}
+                />
+                <Toggle
+                  label="Показывать активность инструментов"
+                  hint="Строки вида «🌐 Ищу в интернете…» с подробностями по клику."
+                  checked={settings.ui.showToolActivity}
+                  onChange={(showToolActivity) => updateSection('ui', { showToolActivity })}
+                />
+                <Toggle
+                  label="Enter отправляет сообщение"
+                  hint="Иначе отправка — Ctrl/Cmd+Enter, а Enter переносит строку."
+                  checked={settings.ui.sendOnEnter}
+                  onChange={(sendOnEnter) => updateSection('ui', { sendOnEnter })}
+                />
+              </div>
+            </>
+          )}
+
+          {tab === 'data' && (
+            <>
+              <div className="rounded-xl border border-slate-200 px-3 py-3 dark:border-slate-800">
+                <p className="text-sm text-slate-800 dark:text-slate-100">Локальное хранилище</p>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  {storage
+                    ? `Занято ${(storage.usage / 1024 / 1024).toFixed(1)} МБ из ${(storage.quota / 1024 / 1024).toFixed(0)} МБ.`
+                    : 'Оценка недоступна в этом браузере.'}
+                </p>
+                <p className="mt-1 text-[11px] text-slate-400">
+                  История и сгенерированные изображения лежат в IndexedDB этого устройства и никуда не отправляются.
+                </p>
+              </div>
+
+              <button type="button" onClick={onOpenDebug} className={cn(btnCls, 'w-full justify-center')}>
+                <IconBug size={15} />
+                Открыть Debug Console
+              </button>
+
+              <button
+                type="button"
+                className={cn(btnCls, 'w-full justify-center text-red-600 dark:text-red-400')}
+                onClick={async () => {
+                  if (!window.confirm('Удалить всю историю чатов? Действие необратимо.')) return
+                  await deleteAll()
+                  notify('История очищена', 'success')
+                }}
+              >
+                <IconTrash size={15} />
+                Удалить всю историю
+              </button>
+
+              <button
+                type="button"
+                className={cn(btnCls, 'w-full justify-center')}
+                onClick={() => {
+                  if (!window.confirm('Сбросить все настройки к значениям по умолчанию?')) return
+                  reset()
+                  notify('Настройки сброшены', 'success')
+                }}
+              >
+                <IconRefresh size={15} />
+                Сбросить настройки
+              </button>
+
+              <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+                <div className="text-sm font-medium text-slate-800 dark:text-slate-100">
+                  О программе
+                </div>
+                <div className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                  {APP_NAME} v{APP_VERSION} · {APP_TAGLINE}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className={btnCls}
+                    disabled={updateChecking}
+                    onClick={() => void checkUpdates({ manual: true })}
+                  >
+                    <IconRefresh size={15} className={updateChecking ? 'animate-spin' : undefined} />
+                    Проверить обновления
+                  </button>
+                  <a className={btnCls} href={RELEASES_URL} target="_blank" rel="noreferrer">
+                    <IconDownload size={15} />
+                    Релизы на GitHub
+                  </a>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}

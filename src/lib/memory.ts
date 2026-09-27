@@ -341,7 +341,11 @@ export function selectForContext(
  * Формулировка намеренно императивная: модели нужно объяснить, что это факты,
  * а не догадки.
  */
-export function buildMemoryContext(settings: Settings, query: string): string {
+export function buildMemoryContext(
+  settings: Settings,
+  query: string,
+  opts: { track?: boolean } = {},
+): string {
   if (!settings.memory.enabled) return ''
   const entries = useMemory.getState().entries
   if (!entries.length) return ''
@@ -349,7 +353,9 @@ export function buildMemoryContext(settings: Settings, query: string): string {
   const picked = selectForContext(entries, query, settings)
   if (!picked.length) return ''
 
-  useMemory.getState().bumpHits(picked.map((e) => e.id))
+  // track: false — предпросмотр в интерфейсе (замер контекста) не должен
+  // накручивать статистику использования записей
+  if (opts.track !== false) useMemory.getState().bumpHits(picked.map((e) => e.id))
 
   return [
     'Долговременная память о пользователе (факты из прошлых сессий, хранятся на его устройстве).',

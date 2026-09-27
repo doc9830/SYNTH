@@ -108,6 +108,12 @@ export interface Settings {
   temperature: number
   /** null = не отправлять max_tokens */
   maxTokens: number | null
+  /**
+   * Размер окна контекста в токенах: диалог длиннее окна обрезается,
+   * старые сообщения не уходят в запрос. 0 — без ограничения.
+   * Виден в шапке чата как «10/32k» и настраивается по тапу на него.
+   */
+  contextWindow: number
   /** Онбординг пройден (или осознанно пропущен) — чтобы не открывать его каждый запуск */
   setupDone: boolean
   search: SearchSettings
@@ -128,6 +134,9 @@ export const DEFAULT_SETTINGS: Settings = {
   systemPrompt: '',
   temperature: 0.7,
   maxTokens: null,
+  // 32k — компромисс: влезает почти любой провайдер, длинные чаты режутся не сразу.
+  // Реальное окно модели пользователь ставит по тапу на «10/32k» в шапке чата.
+  contextWindow: 32768,
   setupDone: false,
   search: {
     enabled: true,
@@ -173,6 +182,20 @@ export const DEFAULT_SETTINGS: Settings = {
     showToolActivity: true,
     sendOnEnter: true,
   },
+}
+
+/**
+ * Приводит значение «размер окна контекста» к числу токенов.
+ *  - отсутствует / не число → значение по умолчанию (старые сохранения);
+ *  - 0 или отрицательное → 0 = без ограничения (историю не режем);
+ *  - иначе → округлённое число токенов.
+ */
+export function sanitizeContextWindow(value: unknown): number {
+  if (value === null || value === undefined || value === '') return DEFAULT_SETTINGS.contextWindow
+  const n = Number(value)
+  if (!Number.isFinite(n)) return DEFAULT_SETTINGS.contextWindow
+  if (n <= 0) return 0
+  return Math.round(n)
 }
 
 interface SettingsState {
@@ -269,6 +292,8 @@ export const useSettings = create<SettingsState>()(
           tools,
           memory,
           ui: { ...DEFAULT_SETTINGS.ui, ...(p.settings?.ui ?? {}) },
+          // старые сохранения поля не знают → подставляем окно по умолчанию
+          contextWindow: sanitizeContextWindow(p.settings?.contextWindow),
         }
         // Уже настроенные пользователи онбординг видеть не должны.
         if (p.settings?.setupDone === undefined) {

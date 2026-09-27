@@ -5,7 +5,7 @@ import { memoryStats, useMemory } from '@/lib/memory'
 import { useModelCatalog } from '@/lib/modelCatalog'
 import { PROVIDER_PRESETS, presetById } from '@/lib/providerPresets'
 import { getReadiness } from '@/lib/readiness'
-import { useSettings } from '@/lib/settings'
+import { sanitizeContextWindow, useSettings } from '@/lib/settings'
 import { notify } from '@/lib/toast'
 import { useUpdateStore } from '@/lib/updateStore'
 import { cn } from '@/lib/utils'
@@ -486,6 +486,21 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
                     update({ maxTokens: e.target.value ? Number(e.target.value) : null })
                   }
                   placeholder="без ограничения"
+                  className={inputCls}
+                />
+              </Field>
+
+              <Field
+                label="Размер контекста (токенов)"
+                hint="Сколько токенов влезает в окно модели. Диалог длиннее окна обрезается: старые сообщения не отправляются, системный промпт и память сохраняются. 0 — не ограничивать. То же самое настраивается в шапке чата по тапу на «10/32k»."
+              >
+                <input
+                  type="number"
+                  min={0}
+                  step={1024}
+                  value={settings.contextWindow}
+                  onChange={(e) => update({ contextWindow: sanitizeContextWindow(e.target.value) })}
+                  placeholder="32768"
                   className={inputCls}
                 />
               </Field>

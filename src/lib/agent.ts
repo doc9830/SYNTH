@@ -5,6 +5,7 @@ import { buildTools, toolMap, toWireTools, type Tool } from '@/tools/registry'
 import type { ChatMessage, TokenUsage, ToolCallRecord } from '@/types'
 import type { Settings } from './settings'
 import { debugLog } from './debug'
+import { historyBudgetFor, trimHistory } from './context'
 import { getModelCapabilities, prettyJson, uid } from './utils'
 import { buildMemoryContext } from './memory'
 
@@ -57,12 +58,26 @@ export function buildWireMessages(history: ChatMessage[], settings: Settings): W
   const lastUser = [...history].reverse().find((m) => m.role === 'user')
   const memoryBlock = buildMemoryContext(settings, lastUser?.content ?? '')
   const systemParts = [settings.systemPrompt.trim(), memoryBlock].filter(Boolean)
+  const systemContent = systemParts.join('\n\n')
 
   if (systemParts.length) {
-    out.push({ role: 'system', content: systemParts.join('\n\n') })
+    out.push({ role: 'system', content: systemContent })
   }
 
-  for (const m of history) {
+  // Окно контекста: история длиннее окна целиком не уходит — часть провайдеров
+  // на переполнении отвечает ошибкой вместо тихой обрезки. Системный промпт и
+  // блок памяти сохраняем всегда, режем только старые сообщения.
+  const budget = historyBudgetFor(settings, systemContent)
+  const trimmed = budget > 0 ? trimHistory(history, budget) : { history, droppedMessages: 0, droppedTokens: 0 }
+  if (trimmed.droppedMessages > 0) {
+    debugLog('info', 'Контекст обрезан по окну', [
+      `окно: ${settings.contextWindow} токенов`,
+      `бюджет истории: ${budget}`,
+      `отброшено сообщений: ${trimmed.droppedMessages} (~${trimmed.droppedTokens} токенов)`,
+    ])
+  }
+
+  for (const m of trimmed.history) {
     if (m.role === 'assistant') {
       if (!m.content.trim()) continue
       out.push({ role: 'assistant', content: m.content })

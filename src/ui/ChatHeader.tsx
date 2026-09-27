@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { pushBackHandler } from '@/lib/backStack'
 import { copyText } from '@/lib/clipboard'
 import { useConversations } from '@/lib/conversations'
 import { conversationToMarkdown, safeFileName } from '@/lib/exportChat'
-import { FEATURES, isFeatureAvailable, isFeatureOn } from '@/lib/features'
 import { saveTextFile } from '@/lib/files'
 import { issuesSignature, useNotices } from '@/lib/notices'
 import type { Readiness } from '@/lib/readiness'
@@ -26,6 +26,7 @@ import {
   IconTrash,
   IconX,
 } from './icons'
+import { ContextMeter } from './ContextMeter'
 import { ModelSelect } from './ModelSelect'
 
 interface ChatHeaderProps {
@@ -54,36 +55,79 @@ export function ChatHeader({
   onOpenMemory,
 }: ChatHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
+  /**
+   * Позиция выпадающего меню. Меню рисуем порталом в body: в шапке есть
+   * backdrop-blur, и внутри неё прокручиваемый блок с заливкой терял фон —
+   * меню выглядело прозрачным (особенность WebView/Chromium).
+   */
+  const [menuAnchor, setMenuAnchor] = useState<{ top: number; right: number } | null>(null)
+  const menuButtonRef = useRef<HTMLButtonElement>(null)
+  const menuPanelRef = useRef<HTMLDivElement>(null)
   const remove = useConversations((s) => s.remove)
+  /** Шаг подтверждения удаления внутри меню (вместо системного confirm) */
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const update = useSettings((s) => s.update)
   const updateInfo = useUpdateStore((s) => s.info)
   const openUpdateDialog = useUpdateStore((s) => s.openDialog)
   const checkUpdates = useUpdateStore((s) => s.check)
   const checkingUpdate = useUpdateStore((s) => s.checking)
 
+  // позицию меню считаем по кнопке (layout-effect успевает до отрисовки кадра)
+  useLayoutEffect(() => {
+    if (!menuOpen) {
+      setMenuAnchor(null)
+      return
+    }
+    const rect = menuButtonRef.current?.getBoundingClientRect()
+    if (!rect) return
+    setMenuAnchor({ top: rect.bottom + 6, right: Math.max(8, window.innerWidth - rect.right) })
+  }, [menuOpen])
+
   useEffect(() => {
     if (!menuOpen) return
-    const onDocClick = (e: MouseEvent) => {
-      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false)
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuOpen(false)
     }
-    document.addEventListener('mousedown', onDocClick)
+    document.addEventListener('keydown', onKey)
     // аппаратная «Назад» закрывает выпадающее меню чата
     const release = pushBackHandler(() => setMenuOpen(false))
     return () => {
-      document.removeEventListener('mousedown', onDocClick)
+      document.removeEventListener('keydown', onKey)
       release()
     }
   }, [menuOpen])
 
+  // закрыли меню — сбрасываем шаг подтверждения удаления
+  useEffect(() => {
+    if (!menuOpen) setConfirmDelete(false)
+  }, [menuOpen])
+
+  /**
+   * Удаление чата из меню шапки.
+   *
+   * Подтверждение — своё, панелью ниже, а не системным window.confirm: в WebView
+   * системный диалог может не появиться, и нажатие выглядело «не сработавшим».
+   * Результат виден в тосте — удаление больше не происходит молча.
+   */
+  const deleteChat = async () => {
+    const target = conversation
+    if (!target || deleting) return
+    setDeleting(true)
+    try {
+      await remove(target.id)
+      notify(`Чат «${target.title}» удалён`, 'success')
+      setMenuOpen(false)
+      setConfirmDelete(false)
+    } catch (error) {
+      notify(`Не удалось удалить чат: ${String(error)}`, 'error')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   const errors = readiness.issues.filter((i) => i.severity === 'error')
   const warnings = readiness.issues.filter((i) => i.severity === 'warning')
-
-  // Активные функции — те же флаги, что и в чипах композера: в шапке видно,
-  // что сейчас уходит в запрос (поиск, картинки, память, инструменты).
-  const activeFeatures = FEATURES.filter(
-    (f) => f.group !== 'view' && isFeatureOn(settings, f) && isFeatureAvailable(settings, f),
-  )
 
   // Верхнее предупреждение закрывается крестиком и не возвращается,
   // пока текст предупреждения не изменится.
@@ -110,9 +154,7 @@ export function ChatHeader({
           <div className="flex items-center gap-1.5 text-[11px] text-neutral-500 dark:text-neutral-400">
             <ModelSelect kind="chat" variant="chip" value={settings.model} onChange={(model) => update({ model })} />
             {busy && <span className="shrink-0 animate-pulse text-neutral-500 dark:text-neutral-400">генерирую…</span>}
-            {activeFeatures.map(({ id, icon: Icon, label }) => (
-              <Icon key={id} size={11} className="shrink-0" aria-label={label} />
-            ))}
+            <ContextMeter messages={conversation?.messages ?? []} />
           </div>
         </div>
 
@@ -154,8 +196,9 @@ export function ChatHeader({
           {errors.length ? 'Настроить' : 'Настройки'}
         </button>
 
-        <div className="relative" ref={menuRef}>
+        <div className="relative">
           <button
+            ref={menuButtonRef}
             type="button"
             onClick={() => setMenuOpen((v) => !v)}
             className="rounded-lg p-2 text-neutral-600 transition hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
@@ -164,8 +207,31 @@ export function ChatHeader({
           >
             <IconDots size={20} />
           </button>
-          {menuOpen && (
-            <div className="absolute right-0 z-20 mt-1 max-h-[70dvh] w-56 overflow-y-auto rounded-xl border border-neutral-200 bg-white py-1 shadow-xl dark:border-neutral-700 dark:bg-neutral-900">
+        </div>
+      </div>
+
+      {/*
+        Меню рисуем порталом в body, а не внутри шапки: у шапки есть backdrop-blur
+        (свой контекст наложения), из-за которого заливка панели терялась и меню
+        выглядело прозрачным, а часть пунктов попадала под ленту сообщений.
+        Прозрачная подложка на весь экран закрывает меню по тапу, а сами пункты
+        остаются обычными кнопками — нажатия срабатывают надёжно.
+      */}
+      {menuOpen &&
+        menuAnchor &&
+        createPortal(
+          <>
+            <div
+              className="fixed inset-0 z-[60] bg-transparent"
+              onClick={() => setMenuOpen(false)}
+              role="presentation"
+            />
+            <div
+              ref={menuPanelRef}
+              role="menu"
+              style={{ top: menuAnchor.top, right: menuAnchor.right }}
+              className="fixed z-[61] max-h-[70dvh] w-56 overflow-y-auto overscroll-contain rounded-xl border border-neutral-200 bg-white py-1 shadow-xl dark:border-neutral-700 dark:bg-neutral-900"
+            >
               <MenuItem
                 icon={<IconSliders size={15} />}
                 label="Функции"
@@ -227,22 +293,43 @@ export function ChatHeader({
                   onOpenDebug()
                 }}
               />
-              <MenuItem
-                icon={<IconTrash size={15} />}
-                label="Удалить чат"
-                danger
-                disabled={!conversation || busy}
-                onClick={async () => {
-                  setMenuOpen(false)
-                  if (!conversation) return
-                  if (!window.confirm(`Удалить чат «${conversation.title}»?`)) return
-                  await remove(conversation.id)
-                }}
-              />
+              <div className="my-1 h-px bg-neutral-200 dark:bg-neutral-800" />
+              {confirmDelete && conversation ? (
+                <div className="px-3 py-2">
+                  <p className="text-sm text-neutral-700 dark:text-neutral-200">
+                    Удалить чат «{conversation.title}»?
+                  </p>
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      type="button"
+                      disabled={deleting}
+                      onClick={() => void deleteChat()}
+                      className="flex-1 rounded-xl bg-red-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-red-700 disabled:opacity-50"
+                    >
+                      {deleting ? 'Удаляю…' : 'Удалить'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDelete(false)}
+                      className="flex-1 rounded-xl border border-neutral-300 px-3 py-2 text-sm text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                    >
+                      Отмена
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <MenuItem
+                  icon={<IconTrash size={15} />}
+                  label="Удалить чат"
+                  danger
+                  disabled={!conversation}
+                  onClick={() => setConfirmDelete(true)}
+                />
+              )}
             </div>
-          )}
-        </div>
-      </div>
+          </>,
+          document.body,
+        )}
 
       {warnings.length > 0 && !errors.length && !warningsHidden && (
         <div className="flex items-start gap-2 border-t border-neutral-200 bg-neutral-50 px-3 py-2 text-[11px] leading-relaxed text-neutral-600 sm:px-4 dark:border-neutral-800 dark:bg-neutral-900/60 dark:text-neutral-300">

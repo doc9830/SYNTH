@@ -3,8 +3,10 @@ import ReactMarkdown, { type Components } from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import remarkGfm from 'remark-gfm'
 import { copyText } from '@/lib/clipboard'
+import { exportMarkdown, fileNameForBlock } from '@/lib/shareFiles'
+import { notify } from '@/lib/toast'
 import { cn } from '@/lib/utils'
-import { IconCheck, IconCopy } from './icons'
+import { IconCheck, IconCopy, IconShare } from './icons'
 
 function extractText(node: ReactNode): string {
   if (node === null || node === undefined || typeof node === 'boolean') return ''
@@ -16,9 +18,13 @@ function extractText(node: ReactNode): string {
   return ''
 }
 
-/** Блок кода с подписью языка и кнопкой копирования. */
+/** Блок кода с подписью языка, копированием и отправкой файлом. */
 function CodeBlock({ language, code, children }: { language: string; code: string; children: ReactNode }) {
   const [copied, setCopied] = useState(false)
+  const [sharing, setSharing] = useState(false)
+  const [shared, setShared] = useState(false)
+  /** Пустой блок отдавать нечем: файл не создаём, кнопка неактивна. */
+  const canShare = code.trim().length > 0
 
   const onCopy = async () => {
     const ok = await copyText(code)
@@ -28,20 +34,47 @@ function CodeBlock({ language, code, children }: { language: string; code: strin
     }
   }
 
+  const onShare = async () => {
+    setSharing(true)
+    try {
+      const result = await exportMarkdown([{ name: fileNameForBlock(language, code), content: code }])
+      if (result.method === 'cancelled') return
+      if (result.ok) {
+        setShared(true)
+        window.setTimeout(() => setShared(false), 1600)
+      }
+      notify(result.message, result.ok ? 'success' : 'error')
+    } finally {
+      setSharing(false)
+    }
+  }
+
   return (
     <div className="group relative my-3 overflow-hidden rounded-xl border border-neutral-700/60 bg-[#0f172a]">
       <div className="flex items-center justify-between gap-2 border-b border-neutral-700/60 px-3 py-1.5">
         <span className="font-mono text-[11px] uppercase tracking-wide text-neutral-400">
           {language || 'code'}
         </span>
-        <button
-          type="button"
-          onClick={onCopy}
-          className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-neutral-300 transition hover:bg-neutral-700/60 hover:text-white"
-        >
-          {copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
-          {copied ? 'Скопировано' : 'Копировать'}
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onCopy}
+            className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-neutral-300 transition hover:bg-neutral-700/60 hover:text-white"
+          >
+            {copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
+            {copied ? 'Скопировано' : 'Копировать'}
+          </button>
+          <button
+            type="button"
+            onClick={onShare}
+            disabled={!canShare || sharing}
+            title={canShare ? 'Поделиться файлом' : 'Блок пустой — отправлять нечего'}
+            className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-neutral-300 transition hover:bg-neutral-700/60 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {shared ? <IconCheck size={13} /> : <IconShare size={13} />}
+            {shared ? 'Отправлено' : sharing ? 'Готовлю…' : 'Поделиться файлом'}
+          </button>
+        </div>
       </div>
       <pre className="chat-md !my-0 !rounded-none !bg-transparent !p-3 text-neutral-100">
         <code>{children}</code>

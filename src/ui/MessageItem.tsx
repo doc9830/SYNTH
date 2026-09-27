@@ -1,10 +1,20 @@
-import { useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { copyText } from '@/lib/clipboard'
+import { exportMarkdown, filesFromMarkdown, joinedFileFromMarkdown, slugify } from '@/lib/shareFiles'
 import { describeStreamPhase } from '@/lib/streamPhase'
 import { notify } from '@/lib/toast'
 import { cn, formatTime, truncate } from '@/lib/utils'
 import type { ChatMessage } from '@/types'
-import { IconAlert, IconCheck, IconCopy, IconPencil, IconRefresh, IconTrash } from './icons'
+import {
+  IconAlert,
+  IconCheck,
+  IconCopy,
+  IconFileText,
+  IconPencil,
+  IconRefresh,
+  IconShare,
+  IconTrash,
+} from './icons'
 import { BrandMark } from './BrandMark'
 import { ImageGrid } from './ImageGrid'
 import { Markdown } from './Markdown'
@@ -70,6 +80,59 @@ function CopyButton({ text }: { text: string }) {
     >
       {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
     </ActionButton>
+  )
+}
+
+/**
+ * Кнопки «поделиться» у сообщения: каждый блок кода — файлом, и рядом
+ * («а не вместо») вариант «одним файлом». Нет блоков — кнопок нет:
+ * пустой файл не создаём.
+ */
+function ShareButtons({ message }: { message: ChatMessage }) {
+  const [busy, setBusy] = useState(false)
+  const files = useMemo(() => filesFromMarkdown(message.content), [message.content])
+  if (!files.length) return null
+
+  const many = files.length > 1
+
+  const share = async (all: boolean) => {
+    if (busy) return
+    setBusy(true)
+    try {
+      const base =
+        slugify(files[0].name.replace(/\.[A-Za-z0-9]{1,8}$/, '')) ||
+        (message.role === 'user' ? 'запрос' : 'ответ')
+      const payload = all ? files : [joinedFileFromMarkdown(message.content, base)]
+      const result = await exportMarkdown(payload)
+      if (result.method === 'cancelled') return
+      notify(result.message, result.ok ? 'success' : 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <ActionButton
+        title={many ? `Поделиться файлами (${files.length})` : 'Поделиться файлом'}
+        disabled={busy}
+        onClick={() => void share(true)}
+      >
+        <span className="flex items-center gap-0.5">
+          <IconShare size={16} />
+          {many && <span className="text-[11px] tabular-nums">{files.length}</span>}
+        </span>
+      </ActionButton>
+      {many && (
+        <ActionButton
+          title="Поделиться одним файлом (.md)"
+          disabled={busy}
+          onClick={() => void share(false)}
+        >
+          <IconFileText size={16} />
+        </ActionButton>
+      )}
+    </>
   )
 }
 
@@ -160,6 +223,7 @@ function UserMessage({
           <div className="flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
             <span className="mr-1 text-[11px] text-neutral-400">{formatTime(message.createdAt)}</span>
             <CopyButton text={message.content} />
+            <ShareButtons message={message} />
             <ActionButton
               title="Изменить и переспросить"
               disabled={busy}
@@ -260,6 +324,7 @@ function AssistantMessage({
               {message.usage?.totalTokens ? ` · ${message.usage.totalTokens} токенов` : ''}
             </span>
             <CopyButton text={message.content} />
+            <ShareButtons message={message} />
             <ActionButton
               title="Сгенерировать заново"
               disabled={busy || runningTool}

@@ -234,3 +234,23 @@ export const IconLink = (p: IconProps) => (
     <path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1" />
   </Icon>
 )
+
+/** Поделиться (системный sheet): три узла и связи между ними. */
+export const IconShare = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="18" cy="5" r="3" />
+    <circle cx="6" cy="12" r="3" />
+    <circle cx="18" cy="19" r="3" />
+    <path d="m8.6 10.6 6.8-4.2M8.6 13.4l6.8 4.2" />
+  </Icon>
+)
+
+/** Файл с текстом — «поделиться одним файлом». */
+export const IconFileText = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" />
+    <path d="M14 3v5h5" />
+    <path d="M9 13h6M9 17h4" />
+  </Icon>
+)
+

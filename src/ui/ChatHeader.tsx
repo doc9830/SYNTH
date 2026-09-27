@@ -7,6 +7,7 @@ import { conversationToMarkdown, safeFileName } from '@/lib/exportChat'
 import { saveTextFile } from '@/lib/files'
 import { issuesSignature, useNotices } from '@/lib/notices'
 import type { Readiness } from '@/lib/readiness'
+import { conversationShareFile, exportMarkdown } from '@/lib/shareFiles'
 import { useSettings, type Settings } from '@/lib/settings'
 import { notify } from '@/lib/toast'
 import { useUpdateStore } from '@/lib/updateStore'
@@ -22,6 +23,7 @@ import {
   IconMenu,
   IconRefresh,
   IconSettings,
+  IconShare,
   IconSliders,
   IconTrash,
   IconX,
@@ -271,6 +273,18 @@ export function ChatHeader({
                     safeFileName(conversation.title),
                     conversationToMarkdown(conversation),
                   )
+                  notify(result.message, result.ok ? 'success' : 'error')
+                }}
+              />
+              <MenuItem
+                icon={<IconShare size={15} />}
+                label="Поделиться чатом (.md)"
+                disabled={!conversation?.messages.length}
+                onClick={async () => {
+                  setMenuOpen(false)
+                  if (!conversation) return
+                  const result = await exportMarkdown([conversationShareFile(conversation)])
+                  if (result.method === 'cancelled') return
                   notify(result.message, result.ok ? 'success' : 'error')
                 }}
               />

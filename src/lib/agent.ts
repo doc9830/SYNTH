@@ -50,7 +50,9 @@ function toTokenUsage(usage?: {
  * для контекста достаточно финальных текстов, а инструмент модель вызовет снова.
  */
 export function buildWireMessages(history: ChatMessage[], settings: Settings): WireMessage[] {
-  const caps = getModelCapabilities(settings.model)
+  // Возможности модели: эвристика по id + ручное переопределение из настроек
+  // («Изображения на вход»), чтобы картинки не пропадали у нестандартных имён.
+  const caps = getModelCapabilities(settings.model, settings.visionInput)
   const out: WireMessage[] = []
 
   // Запрос к памяти строим по последнему вопросу пользователя:
@@ -93,7 +95,7 @@ export function buildWireMessages(history: ChatMessage[], settings: Settings): W
     if (!caps.vision) {
       out.push({
         role: 'user',
-        content: `${m.content}\n\n[Пользователь приложил изображение(я), но текущая модель «${settings.model}» не поддерживает изображения на входе. Скажи об этом и предложи выбрать vision-модель.]`,
+        content: `${m.content}\n\n[Пользователь приложил изображение(я), но в настройках SYNTH указано, что модель «${settings.model}» не принимает изображения на вход, поэтому картинки не отправлены. Скажи об этом и предложи выбрать vision-модель либо включить «Изображения на вход» (Настройки → Подключение).]`,
       })
       continue
     }

@@ -57,7 +57,7 @@ export function Composer({
   const fileRef = useRef<HTMLInputElement>(null)
   const cameraRef = useRef<HTMLInputElement>(null)
   const galleryRef = useRef<HTMLInputElement>(null)
-  const caps = getModelCapabilities(model)
+  const caps = getModelCapabilities(model, settings.visionInput)
 
   // подгрузка/сохранение черновика при переключении чата
   useEffect(() => {
@@ -83,7 +83,7 @@ export function Composer({
 
     if (!caps.vision) {
       notify(
-        `Модель ${model} не принимает изображения на вход. Выберите vision-модель в настройках (например, gemini-2.5-flash или gpt-4o).`,
+        `Модель ${model} помечена как «без изображений на вход». Выберите vision-модель (например, gemini-2.5-flash или gpt-4o) либо разрешите картинки: Настройки → Подключение → «Изображения на вход» → «Да».`,
         'error',
       )
       return
@@ -204,7 +204,11 @@ export function Composer({
             type="button"
             onClick={() => setAttachOpen(true)}
             disabled={!canSend}
-            title={caps.vision ? 'Прикрепить изображение' : `Модель ${model} не поддерживает изображения на входе`}
+            title={
+              caps.vision
+                ? 'Прикрепить изображение'
+                : `Модель ${model} помечена как «без изображений на вход» — включить можно в настройках подключения`
+            }
             aria-label="Прикрепить изображение"
             className="grid h-10 w-10 shrink-0 place-items-center rounded-xl text-neutral-500 transition active:bg-neutral-200/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-neutral-400 dark:active:bg-neutral-800"
           >
@@ -282,7 +286,11 @@ export function Composer({
         open={attachOpen}
         onClose={() => setAttachOpen(false)}
         title="Прикрепить"
-        description="Изображения уходят только в выбранную модель — на сторонние серверы они не загружаются."
+        description={
+          caps.vision
+            ? 'Изображения уходят только в выбранную модель — на сторонние серверы они не загружаются.'
+            : `Модель ${model} помечена как «без изображений на вход». Если она всё-таки понимает картинки, поставьте «Да» в Настройки → Подключение → «Изображения на вход».`
+        }
       >
         <div className="space-y-1">
           <AttachRow

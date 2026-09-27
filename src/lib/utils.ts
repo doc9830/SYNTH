@@ -1,4 +1,4 @@
-import type { ModelCapabilities } from '@/types'
+import type { ModelCapabilities, VisionInputMode } from '@/types'
 
 /** Короткий уникальный id без внешних зависимостей. */
 export function uid(prefix = ''): string {
@@ -74,13 +74,40 @@ export function formatDuration(ms: number): string {
 }
 
 /**
+ * Модели, которые принимают изображения на вход (vision / multimodal).
+ * Список собран по публичным каталогам провайдеров: `/v1/models` этих данных
+ * почти не отдаёт, а ошибка «картинки нельзя» хуже обратной — пользователь
+ * не может приложить фото к модели, которая его прекрасно понимает.
+ * Семейства без vision перечислены в NO_VISION_MODEL_RE.
+ */
+const VISION_MODEL_RE =
+  /(claude|gpt-4|gpt-5|gemini|gemma-?3|pixtral|llava|internvl|moondream|qwen.*(vl|vision)|glm-4v|glm-5v|minimax|grok-3|grok-4|grok.*vision|o[34](?![0-9])|deepseek-v4|step-1|-vl(-|$)|-v-|vision)/
+
+/**
+ * Заведомо текстовые семейства и генераторы картинок: изображения на вход
+ * они не принимают. DeepSeek V3/R1 (`deepseek-chat`, `deepseek-reasoner`) —
+ * только текст; `gpt-image-*` и `dall-e` рисуют, но не общаются.
+ */
+const NO_VISION_MODEL_RE =
+  /(embedding|rerank|whisper|tts|speech|audio|moderation|reasoner|deepseek-chat|deepseek-r1|gpt-image|dall-e)/
+
+/**
  * Эвристика возможностей модели по её ID: vision/reasoning/tools.
  * Провайдеры редко отдают эту информацию в /v1/models, поэтому
  * UI-подсказки (например, «модель не понимает картинки») строятся по имени.
+ * `visionInput` переопределяет догадку вручную (Настройки → Подключение).
  */
-export function getModelCapabilities(model: string): ModelCapabilities {
+export function getModelCapabilities(
+  model: string,
+  visionInput: VisionInputMode = 'auto',
+): ModelCapabilities {
   const m = (model || '').toLowerCase()
-  const vision = /(claude|gpt-4o|gpt-5|gpt-image|gemini|glm-5v|minimax|qwen.*(vl|vision)|-v-|vision)/.test(m)
+  const vision =
+    visionInput === 'on'
+      ? true
+      : visionInput === 'off'
+        ? false
+        : VISION_MODEL_RE.test(m) && !NO_VISION_MODEL_RE.test(m)
   const tools = !/(image|embedding|whisper|tts|audio|video|seedance)/.test(m)
   const reasoning = /(reason|think|r1|deepseek-v4|o[134](?![0-9])|pro)/.test(m)
   return { vision, tools, reasoning }

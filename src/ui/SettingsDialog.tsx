@@ -15,7 +15,7 @@ import { getReadiness } from '@/lib/readiness'
 import { PROTOCOL_LABELS, sanitizeContextWindow, useSettings } from '@/lib/settings'
 import { notify } from '@/lib/toast'
 import { useUpdateStore } from '@/lib/updateStore'
-import { cn } from '@/lib/utils'
+import { cn, getModelCapabilities } from '@/lib/utils'
 import { useConversations } from '@/lib/conversations'
 import { KEYLESS_ENGINE_LABELS } from '@/providers/search'
 import type { KeylessEngine } from '@/types'
@@ -114,6 +114,13 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
   const memoryInfo = useMemo(() => memoryStats(memoryEntries), [memoryEntries])
 
   const readiness = useMemo(() => getReadiness(settings), [settings])
+
+  // Что эвристика думает про картинки у выбранной модели — показываем прямо
+  // в подписи варианта «Авто», чтобы было видно, что уйдёт в запрос.
+  const autoVision = useMemo(
+    () => getModelCapabilities(settings.model, 'auto').vision,
+    [settings.model],
+  )
 
   // список моделей подтягиваем при открытии настроек — пользователю не нужно жать «Список»
   useEffect(() => {
@@ -354,6 +361,21 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
                 }
               >
                 <ModelSelect kind="chat" value={settings.model} onChange={(model) => update({ model })} />
+              </Field>
+
+              <Field
+                label="Изображения на вход"
+                hint="Может ли выбранная модель принимать картинки в сообщении. «Авто» — приложение угадывает по id модели; у шлюзов и локальных серверов имена нестандартные, поэтому догадку можно переопределить: «Да» — картинки отправляются, «Нет» — не отправляются."
+              >
+                <Segmented
+                  value={settings.visionInput}
+                  onChange={(visionInput) => update({ visionInput })}
+                  options={[
+                    { value: 'auto', label: `Авто · ${autoVision ? 'да' : 'нет'}` },
+                    { value: 'on', label: 'Да' },
+                    { value: 'off', label: 'Нет' },
+                  ]}
+                />
               </Field>
 
               <div className="space-y-4 rounded-2xl border border-neutral-200 p-3 dark:border-neutral-800">

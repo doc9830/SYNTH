@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { KeylessEngine } from '@/types'
+import type { KeylessEngine, VisionInputMode } from '@/types'
 
 export type ConnectionMode = 'direct' | 'proxy'
 
@@ -120,6 +120,13 @@ export interface Settings {
   model: string
   /** Кэш списка моделей из GET /v1/models */
   modelList: string[]
+  /**
+   * Принимает ли выбранная модель изображения на вход. `auto` — догадка по id
+   * модели (см. getModelCapabilities), `on` / `off` — ручное переопределение:
+   * у шлюзов и локальных серверов id бывают нестандартными, и эвристика
+   * ошибается (например, `deepseek-v4.1-flash` умеет vision).
+   */
+  visionInput: VisionInputMode
   systemPrompt: string
   temperature: number
   /** null = не отправлять max_tokens */
@@ -150,6 +157,8 @@ export const DEFAULT_SETTINGS: Settings = {
   apiKey: '',
   model: '',
   modelList: [],
+  // изображения на вход: по умолчанию решаем по id модели (эвристика)
+  visionInput: 'auto',
   systemPrompt: '',
   temperature: 0.7,
   maxTokens: null,
@@ -229,6 +238,21 @@ export function sanitizeProtocol(value: unknown): ConnectionProtocol {
 export const PROTOCOL_LABELS: Record<ConnectionProtocol, string> = {
   openai: 'OpenAI-совместимый',
   anthropic: 'Anthropic (Claude)',
+}
+
+/**
+ * Приводит режим «изображения на вход» к известному значению.
+ * Незнакомое (или отсутствующее в старых сохранениях) → auto (эвристика).
+ */
+export function sanitizeVisionInput(value: unknown): VisionInputMode {
+  return value === 'on' || value === 'off' ? value : 'auto'
+}
+
+/** Подписи для переключателя «Изображения на вход». */
+export const VISION_INPUT_LABELS: Record<VisionInputMode, string> = {
+  auto: 'Авто',
+  on: 'Да',
+  off: 'Нет',
 }
 
 interface SettingsState {
@@ -327,6 +351,8 @@ export const useSettings = create<SettingsState>()(
           ui: { ...DEFAULT_SETTINGS.ui, ...(p.settings?.ui ?? {}) },
           // старые сохранения поля не знают → подставляем окно по умолчанию
           contextWindow: sanitizeContextWindow(p.settings?.contextWindow),
+          // «изображения на вход» появилось в 1.4.1: у старых сохранений — авто
+          visionInput: sanitizeVisionInput(p.settings?.visionInput),
           // Тип подключения: если пользователь уже вписал адрес Anthropic,
           // поднимаем протокол до нужного — иначе Claude не заработает.
           protocol:

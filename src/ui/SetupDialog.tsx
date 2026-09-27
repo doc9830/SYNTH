@@ -9,7 +9,7 @@ import {
 } from '@/lib/providerPresets'
 import { PROTOCOL_LABELS, useSettings, type ConnectionProtocol } from '@/lib/settings'
 import { notify } from '@/lib/toast'
-import { cn } from '@/lib/utils'
+import { cn, getModelCapabilities } from '@/lib/utils'
 import { IconAlert, IconCheck, IconRefresh } from './icons'
 import { ModelSelect } from './ModelSelect'
 import { Segmented } from './Segmented'
@@ -45,6 +45,7 @@ export function SetupDialog({ open, onClose, firstRun = false }: SetupDialogProp
   const [baseUrl, setBaseUrl] = useState(settings.baseUrl)
   const [apiKey, setApiKey] = useState(settings.apiKey)
   const [model, setModel] = useState(settings.model)
+  const [visionInput, setVisionInput] = useState(settings.visionInput)
   const [imageEnabled, setImageEnabled] = useState(settings.image.enabled)
   const [imageModel, setImageModel] = useState(settings.image.model)
   const [showKey, setShowKey] = useState(false)
@@ -62,6 +63,7 @@ export function SetupDialog({ open, onClose, firstRun = false }: SetupDialogProp
     setBaseUrl(settings.baseUrl)
     setApiKey(settings.apiKey)
     setModel(settings.model)
+    setVisionInput(settings.visionInput)
     setImageEnabled(settings.image.enabled)
     setImageModel(settings.image.model)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -114,7 +116,7 @@ export function SetupDialog({ open, onClose, firstRun = false }: SetupDialogProp
     // Claude не рисует: генерация картинок возможна только через отдельное
     // подключение (OpenAI, Gemini), иначе включённый флаг даст ошибку в чате.
     const imagesAllowed = !(protocol === 'anthropic' && settings.image.mode === 'inherit')
-    update({ model: model.trim(), protocol, setupDone: true })
+    update({ model: model.trim(), protocol, visionInput, setupDone: true })
     updateSection('image', {
       enabled: imageEnabled && Boolean(imageModel.trim()) && imagesAllowed,
       model: imageModel.trim(),
@@ -324,6 +326,28 @@ export function SetupDialog({ open, onClose, firstRun = false }: SetupDialogProp
             <span className="mt-1 block text-[11px] text-neutral-500 dark:text-neutral-400">
               Список получен из GET /v1/models. Нужной модели нет? Введите её id вручную в
               селекторе.
+            </span>
+          </div>
+
+          <div>
+            <div className="mb-1.5 text-xs font-medium text-neutral-600 dark:text-neutral-300">
+              Изображения на вход
+            </div>
+            <Segmented
+              value={visionInput}
+              onChange={setVisionInput}
+              options={[
+                {
+                  value: 'auto',
+                  label: `Авто · ${getModelCapabilities(model, 'auto').vision ? 'да' : 'нет'}`,
+                },
+                { value: 'on', label: 'Да' },
+                { value: 'off', label: 'Нет' },
+              ]}
+            />
+            <span className="mt-1 block text-[11px] text-neutral-500 dark:text-neutral-400">
+              Может ли модель принимать картинки в сообщении. «Авто» — приложение решает по id
+              модели; если модель умеет, а приложение не знает, поставьте «Да».
             </span>
           </div>
 

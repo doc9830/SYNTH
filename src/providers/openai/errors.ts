@@ -85,6 +85,19 @@ const STATUS_MESSAGES: Record<number, { message: string; hint: string }> = {
   },
 }
 
+/**
+ * Сообщение провайдера о том, что картинку в запросе он не принимает.
+ * Отдельная подсказка нужна, потому что решение «модель понимает изображения»
+ * принимает эвристика приложения (см. getModelCapabilities) — а она может
+ * ошибаться на нестандартных id моделей у шлюзов.
+ */
+const IMAGE_REJECTED_RE =
+  /(image_url|image input|image content|vision|multi-?modal|content.*image|image.*not support|изображени|картинк|нескольких типов)/i
+
+/** Подсказка, когда провайдер отклонил запрос из-за изображения. */
+export const IMAGE_REJECTED_HINT =
+  'Похоже, модель не принимает изображения на вход. Уберите вложение, выберите vision-модель или в Настройки → Подключение → «Изображения на вход» поставьте «Нет», чтобы приложение больше не отправляло картинки.'
+
 function extractMessage(body: unknown): { message?: string; code?: string } {
   if (!body || typeof body !== 'object') return {}
   const obj = body as Record<string, unknown>
@@ -115,6 +128,9 @@ export async function errorFromResponse(res: Response, endpoint: string): Promis
   const known = STATUS_MESSAGES[res.status]
   const parts: string[] = []
   if (upstream) parts.push(upstream)
+  // Провайдер ругается на картинку — подсказываем, что делать, вместо
+  // общего «проверьте параметры запроса».
+  const imageRejected = Boolean(upstream && IMAGE_REJECTED_RE.test(upstream))
 
   return new ApiError({
     message: parts.length
@@ -122,7 +138,7 @@ export async function errorFromResponse(res: Response, endpoint: string): Promis
       : known?.message ?? `Запрос не удался (HTTP ${res.status})`,
     status: res.status,
     endpoint,
-    hint: known?.hint,
+    hint: imageRejected ? IMAGE_REJECTED_HINT : known?.hint,
     code,
     details: typeof text === 'string' ? text.slice(0, 2000) : undefined,
   })

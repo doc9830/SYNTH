@@ -29,7 +29,9 @@
 - Markdown с подсветкой кода, копирование, таблицы, списки; правка своих сообщений и перегенерация ответа.
 - История чатов в IndexedDB устройства, поиск по чатам, закрепление, экспорт в `.md`.
 - Вложения-изображения (для vision-моделей), выбор и загрузка моделей списком из `/v1/models`
-  (если провайдер отдаёт `pricing`, рядом видна цена за 1M токенов).
+  (если провайдер отдаёт `pricing`, рядом видна цена за 1M токенов). Принимает ли модель картинки,
+  приложение решает по id (например, `deepseek-v4.1-flash`, `qwen3-vl-*`, `gpt-4o`, `claude-*`),
+  а в «Подключении» это можно переопределить: «Изображения на вход» → Авто / Да / Нет.
 - Тёмная/светлая тема, размер шрифта, «Enter — отправить», скрытие мыслей и панели инструментов.
 - **Функции включаются из чата**: меню «⋮» в шапке и чипы под строкой ввода — веб-поиск, чтение
   ссылок, картинки, калькулятор, время, история чатов и память, без ухода в настройки.
@@ -125,6 +127,11 @@ npm run mock:api     # опционально: мок OpenAI-совместим�
 Список в `src/lib/providerPresets.ts` — только удобство: поддерживается любой
 OpenAI-совместимый шлюз, включая собственный.
 
+Модели, которые понимают картинки, приложение узнаёт по id (у `deepseek-v4.1-flash`
+из пресета RuAPI vision есть). Если у шлюза имя нестандартное, поставьте
+«Настройки → Подключение → Изображения на вход → Да» — тогда вложения уходят
+в запрос как `image_url` с data URL.
+
 ## Команды
 
 | Команда | Что делает |
@@ -133,7 +140,7 @@ OpenAI-совместимый шлюз, включая собственный.
 | `npm run build` | Прод-сборка (`tsc -b && vite build`) в `dist/` |
 | `npm run preview` | Просмотр собранной PWA локально |
 | `npm run typecheck` | Проверка типов (app + node) |
-| `npm run checks` | Смоук-проверки логики: функции, память, калькулятор, контекст, Anthropic (`checks/`) |
+| `npm run checks` | Смоук-проверки логики: функции, память, калькулятор, контекст, Anthropic, изображения на вход (`checks/`) |
 | `npm run icons` | Иконки PWA в `public/` |
 | `npm run android:assets` | Иконки и сплэши Android (`mipmap-*`, `drawable-*`) |
 | `npm run brand` | Иконки PWA + Android сразу |
@@ -172,7 +179,7 @@ src/
                   ThinkingPanel, UpdateDialog, …
 server/           локальный backend: proxy-режим, поиск, чтение страниц (headless Chrome)
 scripts/          brand.mjs (логотип), gen-icons, gen-android-assets, mock-openai
-checks/           смоук-проверки логики (tsx): features, memory, calculator, context, anthropic — npm run checks
+checks/           смоук-проверки логики (tsx): features, memory, calculator, context, anthropic, vision — npm run checks
 android/          Capacitor-проект: MainActivity, UpdaterPlugin, ассеты, подпись
 ```
 
@@ -183,7 +190,7 @@ npm run android:apk        # debug APK  → android/app/build/outputs/apk/debug/
 npm run android:release    # release APK → android/app/build/outputs/apk/release/
 ```
 
-- `applicationId`: `app.synth.hub`, название — SYNTH, версия — `1.4.0` (`android/app/build.gradle`).
+- `applicationId`: `app.synth.hub`, название — SYNTH, версия — `1.4.1` (`android/app/build.gradle`).
 - Знак приложения — минималистичная монограмма «S» на графитовом фоне: `scripts/brand.mjs` → `npm run brand`
   (PWA-иконки, `mipmap-*`, `ic_launcher_foreground`, сплэши).
 - Подпись релиза: `android/keystore.properties` + `android/synth-release.jks` (оба в `.gitignore`).

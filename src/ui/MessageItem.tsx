@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { copyText } from '@/lib/clipboard'
 import { exportMarkdown, filesFromMarkdown, joinedFileFromMarkdown, slugify } from '@/lib/shareFiles'
 import { describeStreamPhase } from '@/lib/streamPhase'
+import { selectStreamPatch, useStreamDraft } from '@/lib/streamDraft'
 import { notify } from '@/lib/toast'
 import { cn, formatTime, truncate } from '@/lib/utils'
 import type { ChatMessage } from '@/types'
@@ -350,15 +351,23 @@ function AssistantMessage({
 }
 
 export function MessageItem(props: MessageItemProps) {
-  if (props.message.role === 'user') {
+  /**
+   * Кадры стрима приходят отдельным потоком, а не через стор чатов: подписан
+   * только тот блок, который печатается сейчас. Остальные сообщения видят
+   * `null` и не перерисовываются.
+   */
+  const patch = useStreamDraft(selectStreamPatch(props.message.id))
+  const message: ChatMessage = patch ? { ...props.message, ...patch } : props.message
+
+  if (message.role === 'user') {
     return (
       <UserMessage
-        message={props.message}
+        message={message}
         busy={props.busy}
         onEdit={props.onEdit}
         onDelete={props.onDelete}
       />
     )
   }
-  return <AssistantMessage {...props} />
+  return <AssistantMessage {...props} message={message} />
 }

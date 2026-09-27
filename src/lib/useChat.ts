@@ -1,9 +1,10 @@
 import { useCallback, useRef, useState } from 'react'
 import type { ChatMessage, ImageAttachment } from '@/types'
 import { runAgent } from './agent'
-import { useConversations } from './conversations'
+import { persistStreamSnapshot, useConversations } from './conversations'
 import { autoExtractMemories, parseRememberCommand, remember, shouldExtract } from './memory'
 import { getSettings, type Settings } from './settings'
+import { clearStreamDraft, publishStreamDraft } from './streamDraft'
 import { notify } from './toast'
 import { uid } from './utils'
 
@@ -29,6 +30,28 @@ function emptyAssistant(id: string): ChatMessage {
 }
 
 /**
+ * Не чаще раза в 0.7 с сохраняем черновик стрима в БД (страховка от kill):
+ * в стор сообщений кадры больше не пишутся, а частичный текст терять не хочется.
+ * 0.7 с — та же частота, с какой раньше дебаунсился setMessages.
+ */
+const SNAPSHOT_INTERVAL_MS = 700
+
+/** Поля черновика, которые уезжают в сообщение: и в кадр стрима, и в финал хода. */
+function draftFields(draft: AssistantDraft): Partial<ChatMessage> {
+  return {
+    content: draft.content,
+    reasoning: draft.reasoning,
+    reasoningMs: draft.reasoningMs,
+    toolCalls: draft.toolCalls,
+    model: draft.model,
+    usage: draft.usage,
+    status: draft.status,
+    error: draft.error,
+    errorDetails: draft.errorDetails,
+  }
+}
+
+/**
  * Оркестрация чата: отправка, стриминг, tool loop, остановка,
  * regenerate и редактирование сообщений.
  */
@@ -42,33 +65,52 @@ export function useChat() {
   const reasoningMsRef = useRef(0)
   /** Начало текущего отрезка размышлений */
   const reasoningStartedRef = useRef<number | null>(null)
+  /** Когда последний раз черновик стрима сохранялся в БД (см. SNAPSHOT_INTERVAL_MS) */
+  const snapshotAtRef = useRef(0)
 
-  /** Переносит текущий черновик ассистента в стор (без записи в БД). */
+  /**
+   * Публикация кадра стрима.
+   *
+   * Кадр уходит в отдельный маленький стор (`streamDraft`), а НЕ в список
+   * сообщений: иначе на каждый чанк менялась бы ссылка `conversations` — и
+   * вместе с ней перерисовывались сайдбар, шапка и весь список сообщений.
+   *
+   * Список чатов пересортировывается только в терминальном состоянии хода
+   * (см. `commitTurn`).
+   */
   const flushDraft = useCallback((conversationId: string, assistantId: string) => {
     const draft = draftRef.current
-    const store = useConversations.getState()
-    const conv = store.conversations.find((c) => c.id === conversationId)
-    if (!conv || !draft) return
-    const messages = conv.messages.map((m) =>
-      m.id === assistantId
-        ? {
-            ...m,
-            content: draft.content,
-            reasoning: draft.reasoning,
-            reasoningMs: draft.reasoningMs,
-            toolCalls: draft.toolCalls,
-            model: draft.model,
-            usage: draft.usage,
-            status: draft.status,
-            error: draft.error,
-            errorDetails: draft.errorDetails,
-          }
-        : m,
-    )
-    store.setMessages(conversationId, messages)
+    if (!draft) return
+    const fields = draftFields(draft)
+    publishStreamDraft(conversationId, assistantId, fields)
+
+    const now = Date.now()
+    if (now - snapshotAtRef.current < SNAPSHOT_INTERVAL_MS) return
+    snapshotAtRef.current = now
+    persistStreamSnapshot(conversationId, assistantId, fields)
   }, [])
 
-  /** Дописывает текст стрима в черновик (в стор попадает через flushDraft). */
+  /**
+   * Терминальное состояние хода: единственная запись финала в список сообщений
+   * (завершён / ошибка / отменён) — здесь же пересортировка списка чатов.
+   */
+  const commitTurn = useCallback(
+    (conversationId: string, assistantId: string, draft: AssistantDraft) => {
+      const store = useConversations.getState()
+      const conv = store.conversations.find((c) => c.id === conversationId)
+      if (!conv) return
+      const fields = draftFields(draft)
+      const messages = conv.messages.map((m) =>
+        m.id === assistantId ? { ...m, ...fields } : m,
+      )
+      // immediate: финал сразу в IndexedDB, без дебаунса
+      store.setMessages(conversationId, messages, true)
+      clearStreamDraft(assistantId)
+    },
+    [],
+  )
+
+  /** Дописывает текст стрима в черновик (в UI попадает через `flushDraft`, в стор чатов — только в финале хода). */
   const appendDraft = useCallback((field: 'content' | 'reasoning', text: string) => {
     const draft = draftRef.current
     if (!draft) return
@@ -127,6 +169,7 @@ export function useChat() {
       draftRef.current = newDraft()
       reasoningMsRef.current = 0
       reasoningStartedRef.current = null
+      snapshotAtRef.current = 0
       setIsStreaming(true)
 
       const result = await runAgent({
@@ -190,37 +233,39 @@ export function useChat() {
           : undefined,
       }
       draftRef.current = draft
-      flushDraft(conversationId, assistantId)
+      try {
+        // Ход перешёл в терминальное состояние: финал в стор + сразу в IndexedDB.
+        commitTurn(conversationId, assistantId, draft)
 
-      // финальное состояние — сразу в IndexedDB
-      const store = useConversations.getState()
-      const conv = store.conversations.find((c) => c.id === conversationId)
-      if (conv) store.setMessages(conversationId, conv.messages, true)
-
-      // Долговременная память: фоновый разбор хода отдельным нестримовым запросом.
-      // Ошибки внутри глушатся — на чат это никак не влияет.
-      if (result.content && !result.error && shouldExtract(settings, history)) {
-        void autoExtractMemories({
-          settings,
-          conversationId,
-          messages: [
-            ...history,
-            {
-              id: `${assistantId}-extract`,
-              role: 'assistant',
-              createdAt: Date.now(),
-              content: result.content,
-              status: 'complete',
-            },
-          ],
-        })
+        // Долговременная память: фоновый разбор хода отдельным нестримовым запросом.
+        // Ошибки внутри глушатся — на чат это никак не влияет.
+        if (result.content && !result.error && shouldExtract(settings, history)) {
+          void autoExtractMemories({
+            settings,
+            conversationId,
+            messages: [
+              ...history,
+              {
+                id: `${assistantId}-extract`,
+                role: 'assistant',
+                createdAt: Date.now(),
+                content: result.content,
+                status: 'complete',
+              },
+            ],
+          })
+        }
+      } finally {
+        // Черновик живёт только пока идёт ход: не оставляем «висящий» кадр,
+        // если разбор памяти или запись в стор упали.
+        clearStreamDraft(assistantId)
+        draftRef.current = null
+        abortRef.current = null
+        snapshotAtRef.current = 0
+        setIsStreaming(false)
       }
-
-      draftRef.current = null
-      abortRef.current = null
-      setIsStreaming(false)
     },
-    [flushDraft, patchAssistant, appendDraft, closeThinking, cancelPendingFlush],
+    [flushDraft, commitTurn, patchAssistant, appendDraft, closeThinking, cancelPendingFlush],
   )
 
   /** Отправить сообщение (при необходимости создаёт новый чат). */

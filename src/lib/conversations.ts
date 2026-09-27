@@ -124,6 +124,14 @@ export const useConversations = create<ConversationsState>((set, get) => ({
     flushWrite(next)
   },
 
+  /**
+   * Полная замена сообщений чата.
+   *
+   * Вызывается только на «настоящих» изменениях списка: старт хода,
+   * терминальное состояние хода, удаление сообщения. Кадры стрима сюда не
+   * попадают (они живут в `streamDraft`), поэтому сортировка списка чатов
+   * выполняется один-два раза за ход, а не на каждый чанк.
+   */
   setMessages: (id, messages, immediate = false) => {
     const conv = get().conversations.find((c) => c.id === id)
     if (!conv) return
@@ -172,4 +180,24 @@ export function useActiveConversation(): Conversation | undefined {
   return useConversations((s) =>
     s.activeId ? s.conversations.find((c) => c.id === s.activeId) : undefined,
   )
+}
+
+/**
+ * Снимок стрим-черновика прямо в БД, минуя стор.
+ *
+ * Во время стрима список чатов намеренно не обновляется (см. `streamDraft.ts`):
+ * иначе каждый кадр менял бы ссылку `conversations` и тянул за собой рендер
+ * сайдбара и шапки. Чтобы не терять частичный ответ при убийстве приложения,
+ * черновик изредка пишется в IndexedDB отдельной записью. Список чатов при
+ * этом не сортируется — сортировка одна на ход, в терминальном состоянии.
+ */
+export function persistStreamSnapshot(
+  conversationId: string,
+  messageId: string,
+  patch: Partial<ChatMessage>,
+): void {
+  const conv = useConversations.getState().conversations.find((c) => c.id === conversationId)
+  if (!conv) return
+  const messages = conv.messages.map((m) => (m.id === messageId ? { ...m, ...patch } : m))
+  scheduleWrite({ ...conv, messages, updatedAt: Date.now() })
 }

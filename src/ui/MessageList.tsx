@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Conversation } from '@/types'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/lib/settings'
+import { useStreamDraft } from '@/lib/streamDraft'
 import { IconChevronDown, IconGlobe, IconImage, IconSparkles } from './icons'
 import { BrandMark } from './BrandMark'
 import { MessageItem } from './MessageItem'
@@ -56,6 +57,8 @@ export function MessageList({
 }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [atBottom, setAtBottom] = useState(true)
+  /** То же значение, но для подписки на кадры стрима — без переподписки на каждый рендер */
+  const atBottomRef = useRef(true)
   const showReasoning = useSettings((s) => s.settings.ui.showReasoning)
   const showToolActivity = useSettings((s) => s.settings.ui.showToolActivity)
   const messages = conversation?.messages ?? []
@@ -70,7 +73,9 @@ export function MessageList({
   const onScroll = () => {
     const el = scrollRef.current
     if (!el) return
-    setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 120)
+    const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+    atBottomRef.current = bottom
+    setAtBottom(bottom)
   }
 
   // при смене чата — сразу к низу, без анимации
@@ -84,6 +89,19 @@ export function MessageList({
   useEffect(() => {
     if (atBottom) scrollToBottom('auto')
   }, [messages, atBottom])
+
+  /**
+   * Кадры стрима идут не через стор сообщений, а отдельным потоком
+   * (`streamDraft`) — подписываемся на него напрямую, чтобы список не
+   * перерисовывался на каждый чанк, но прокрутка продолжала следовать за текстом.
+   */
+  useEffect(() => {
+    if (!conversationId) return undefined
+    return useStreamDraft.subscribe((state) => {
+      if (!state.draft || state.draft.conversationId !== conversationId) return
+      if (atBottomRef.current) scrollToBottom('auto')
+    })
+  }, [conversationId])
 
   if (!conversation || messages.length === 0) {
     return (

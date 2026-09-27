@@ -4,7 +4,7 @@
 
 - `applicationId` / `namespace`: **`app.synth.hub`**
 - Название: **SYNTH** (`android/app/src/main/res/values/strings.xml`)
-- Версия: `versionCode 3`, `versionName "1.1.1"` (`android/app/build.gradle`)
+- Версия: `versionCode 4`, `versionName "1.2.0"` (`android/app/build.gradle`)
 - minSdk 24, target/compile SDK — из `android/variables.gradle`
 
 ## Сборка
@@ -166,12 +166,12 @@ JS-обёртка — `src/lib/files.ts` (`saveTextFile`, `saveImageFile`): в A
 
 ```bash
 # 1. версия веб-бандла (попадает в appInfo → APP_VERSION)
-#    package.json → "version": "1.1.1"
+#    package.json → "version": "1.2.0"
 # 2. версия пакета
-#    android/app/build.gradle → versionCode 3, versionName "1.1.1"
+#    android/app/build.gradle → versionCode 4, versionName "1.2.0"
 npm run android:release
-cp android/app/build/outputs/apk/release/app-release.apk synth-v1.1.1.apk
-# 3. GitHub → Releases → Draft a new release: tag v1.1.1, приложить synth-v1.1.1.apk
+cp android/app/build/outputs/apk/release/app-release.apk synth-v1.2.0.apk
+# 3. GitHub → Releases → Draft a new release: tag v1.2.0, приложить synth-v1.2.0.apk
 ```
 
 После публикации релиза приложения на телефонах увидят обновление при следующем запуске.

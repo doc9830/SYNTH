@@ -9,7 +9,7 @@ import {
 import { useSettings } from '@/lib/settings'
 import { notify } from '@/lib/toast'
 import { cn } from '@/lib/utils'
-import { IconCheck, IconChevronDown, IconRefresh, IconSearch } from './icons'
+import { IconCheck, IconChevronDown, IconImage, IconRefresh, IconSearch } from './icons'
 import { Sheet } from './Sheet'
 
 /**
@@ -38,12 +38,19 @@ export function ModelSelect({
   const ensure = useModelCatalog((s) => s.ensure)
   const refresh = useModelCatalog((s) => s.refresh)
   const cached = useSettings((s) => (kind === 'chat' ? s.settings.modelList : s.settings.image.modelList))
-  const connected = useSettings((s) => s.settings.mode === 'proxy' || Boolean(s.settings.apiKey.trim()))
+  // Картинки могут работать на своём подключении: тогда список берём из него,
+  // даже если у чата ещё нет ключа (например, первый запуск вручную).
+  const connected = useSettings((s) =>
+    kind === 'image'
+      ? s.settings.mode === 'proxy' ||
+        Boolean(s.settings.apiKey.trim()) ||
+        (s.settings.image.mode === 'direct' && Boolean(s.settings.image.baseUrl.trim()))
+      : s.settings.mode === 'proxy' || Boolean(s.settings.apiKey.trim()),
+  )
 
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [manual, setManual] = useState('')
-  const [showAll, setShowAll] = useState(false)
 
   // список подтягиваем сразу, как только появилось рабочее подключение
   useEffect(() => {
@@ -51,15 +58,13 @@ export function ModelSelect({
   }, [connected, ensure, kind])
 
   const ids = bucket.ids.length ? bucket.ids : cached
-  const imageOnly = kind === 'image' && !showAll
 
+  // Показываем ВЕСЬ список подключения: у части провайдеров «рисующие» модели
+  // названы так, что эвристика их не узнаёт, а раньше они просто исчезали из списка.
   const list = useMemo(() => {
     const q = query.trim().toLowerCase()
-    let items = ids
-    if (imageOnly) items = items.filter((id) => looksLikeImageModel(id) || id === value)
-    if (q) items = items.filter((id) => id.toLowerCase().includes(q))
-    return items
-  }, [ids, imageOnly, query, value])
+    return q ? ids.filter((id) => id.toLowerCase().includes(q)) : ids
+  }, [ids, query])
 
   const pick = (model: string) => {
     onChange(model)
@@ -191,13 +196,10 @@ export function ModelSelect({
         )}
 
         {kind === 'image' && ids.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setShowAll((v) => !v)}
-            className="mt-3 text-[11px] text-neutral-500 underline decoration-dotted underline-offset-2 transition hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-100"
-          >
-            {showAll ? 'Показывать только «рисующие» модели' : 'Показать все модели подключения'}
-          </button>
+          <p className="mt-3 text-[11px] text-neutral-500 dark:text-neutral-400">
+            Показаны все модели подключения — «рисующие» помечены значком пера. Если модель рисует
+            через чат, выберите способ «Chat-based» в настройках генерации.
+          </p>
         )}
 
         <div className="mt-2" role="listbox" aria-label="Модели">
@@ -241,6 +243,12 @@ export function ModelSelect({
                       <span className="block break-all font-mono text-[12.5px] text-neutral-800 dark:text-neutral-100">
                         {id}
                       </span>
+                      {kind === 'image' && looksLikeImageModel(id) && (
+                        <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-neutral-100 px-1.5 py-0.5 text-[10px] text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400">
+                          <IconImage size={10} />
+                          рисует
+                        </span>
+                      )}
                       {price && (
                         <span className="mt-0.5 block text-[10.5px] text-neutral-400 dark:text-neutral-500">
                           {formatModelPrice(price)}

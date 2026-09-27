@@ -2,7 +2,9 @@ import { useCallback, useRef, useState } from 'react'
 import type { ChatMessage, ImageAttachment } from '@/types'
 import { runAgent } from './agent'
 import { useConversations } from './conversations'
+import { autoExtractMemories, parseRememberCommand, remember, shouldExtract } from './memory'
 import { getSettings, type Settings } from './settings'
+import { notify } from './toast'
 import { uid } from './utils'
 
 interface AssistantDraft {
@@ -195,6 +197,25 @@ export function useChat() {
       const conv = store.conversations.find((c) => c.id === conversationId)
       if (conv) store.setMessages(conversationId, conv.messages, true)
 
+      // Долговременная память: фоновый разбор хода отдельным нестримовым запросом.
+      // Ошибки внутри глушатся — на чат это никак не влияет.
+      if (result.content && !result.error && shouldExtract(settings, history)) {
+        void autoExtractMemories({
+          settings,
+          conversationId,
+          messages: [
+            ...history,
+            {
+              id: `${assistantId}-extract`,
+              role: 'assistant',
+              createdAt: Date.now(),
+              content: result.content,
+              status: 'complete',
+            },
+          ],
+        })
+      }
+
       draftRef.current = null
       abortRef.current = null
       setIsStreaming(false)
@@ -218,6 +239,20 @@ export function useChat() {
 
       const conv = useConversations.getState().conversations.find((c) => c.id === conversationId)
       if (!conv) return
+
+      // Команда «запомни, что …» — пишем в память детерминированно, без модели.
+      // Сообщение всё равно уходит в чат: склейка похожих записей не даст дубля.
+      if (settings.memory.enabled) {
+        const command = parseRememberCommand(text)
+        if (command) {
+          void remember(command, { source: 'user', conversationId }).then((entry) => {
+            notify(
+              entry ? `Запомнил: ${entry.text}` : 'Похоже на секрет — в память не записываю',
+              entry ? 'success' : 'error',
+            )
+          })
+        }
+      }
 
       const userMessage: ChatMessage = {
         id: uid('msg'),

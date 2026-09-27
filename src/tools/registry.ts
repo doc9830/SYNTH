@@ -1,7 +1,11 @@
 import type { Settings } from '@/lib/settings'
 import type { WireTool } from '@/providers/openai/types'
+import { calculatorTool } from './calculator'
+import { currentTimeTool } from './currentTime'
 import { generateImageTool } from './generateImage'
+import { forgetTool, recallTool, rememberTool } from './memory'
 import { readUrlTool } from './readUrl'
+import { searchChatsTool } from './searchChats'
 import type { Tool } from './types'
 import { webSearchTool } from './webSearch'
 
@@ -14,6 +18,10 @@ export function buildTools(settings: Settings): Tool[] {
   // read_url живёт в той же вкладке настроек, что и поиск: это «работа с вебом»
   if (settings.search.enabled && settings.search.readPages) tools.push(readUrlTool)
   if (settings.image.enabled) tools.push(generateImageTool)
+  if (settings.tools.calculator) tools.push(calculatorTool)
+  if (settings.tools.currentTime) tools.push(currentTimeTool)
+  if (settings.tools.chatHistory) tools.push(searchChatsTool)
+  if (settings.memory.enabled) tools.push(rememberTool, recallTool, forgetTool)
   return tools
 }
 
@@ -55,6 +63,42 @@ export const TOOL_LABELS: Record<
     running: 'Генерирую изображение…',
     done: 'Изображение готово',
     failed: 'Не удалось сгенерировать изображение',
+  },
+  calculator: {
+    icon: '🧮',
+    running: 'Считаю…',
+    done: 'Посчитано',
+    failed: 'Не удалось вычислить выражение',
+  },
+  current_time: {
+    icon: '🕒',
+    running: 'Уточняю дату и время…',
+    done: 'Дата и время получены',
+    failed: 'Не удалось определить время',
+  },
+  search_chats: {
+    icon: '🗂️',
+    running: 'Ищу по прошлым чатам…',
+    done: 'История просмотрена',
+    failed: 'Не удалось поискать по чатам',
+  },
+  remember: {
+    icon: '🧠',
+    running: 'Запоминаю…',
+    done: 'Записано в память',
+    failed: 'Не удалось записать в память',
+  },
+  recall: {
+    icon: '🧠',
+    running: 'Вспоминаю…',
+    done: 'Память просмотрена',
+    failed: 'Не удалось обратиться к памяти',
+  },
+  forget: {
+    icon: '🧽',
+    running: 'Удаляю из памяти…',
+    done: 'Удалено из памяти',
+    failed: 'Не удалось удалить из памяти',
   },
 }
 

@@ -148,3 +148,35 @@ export interface ModelCapabilities {
   tools: boolean
   reasoning: boolean
 }
+
+/**
+ * Вид записи долговременной памяти.
+ *  - fact        — устойчивый факт («живёт в Казани»)
+ *  - preference  — предпочтение («любит короткие ответы без воды»)
+ *  - project     — проект/контекст работы («пишет приложение SYNTH на React»)
+ *  - instruction — постоянное указание («отвечай по-русски»)
+ *  - note        — заметка, добавленная вручную
+ */
+export type MemoryKind = 'fact' | 'preference' | 'project' | 'instruction' | 'note'
+
+/**
+ * Запись долговременной памяти. Хранится только на устройстве (IndexedDB),
+ * подмешивается в system prompt и доступна модели через инструменты.
+ */
+export interface MemoryEntry {
+  id: string
+  /** Само утверждение — одна короткая фраза, от третьего лица */
+  text: string
+  kind: MemoryKind
+  tags: string[]
+  /** Закреплённые записи не удаляются при чистке и всегда идут в контекст */
+  pinned: boolean
+  createdAt: number
+  updatedAt: number
+  /** Откуда запись: команда «запомни», авто-извлечение, инструмент модели, вручную */
+  source: 'user' | 'auto' | 'tool' | 'manual'
+  /** Чат-источник (если запись извлечена из переписки) */
+  conversationId?: string
+  /** Сколько раз запись попадала в контекст модели — влияет на ранжирование */
+  hits: number
+}

@@ -14,9 +14,9 @@ import { getSettings, useSettings } from './settings'
 export type ModelKind = 'chat' | 'image'
 
 /**
- * Эвристика «модель умеет рисовать»: провайдеры не отдают тип модели в /v1/models,
- * поэтому image-селектор по умолчанию фильтрует список по названию
- * (с возможностью показать все модели целиком).
+ * Эвристика «модель умеет рисовать»: использовалась, чтобы фильтровать список
+ * в селекторе картинок. Теперь картинки показывают весь список подключения,
+ * но функция остаётся полезной для подсказок и диагностики.
  */
 const IMAGE_MODEL_RE =
   /(gpt-image|dall-?e|imagen|image[-_]?(gen|preview|\d)|flux|stable-diffusion|sdxl|sd3|ideogram|recraft|midjourney|seedream|kolors|qwen-image|nano-banana|photon|kandinsky|grok[-_ ]?\d*(\.\d+)?[-_ ]?image|gemini[-_.\d]*[-_. ]image|doubao[-_ ]?image)/i
@@ -124,7 +124,8 @@ async function runRefresh(kind: ModelKind, force: boolean): Promise<string[]> {
 
   const task = (async (): Promise<string[]> => {
     try {
-      const infos = await listModelInfos(getSettings())
+      // для картинок список берём из их собственного подключения (если оно задано)
+      const infos = await listModelInfos(getSettings(), undefined, kind)
       const ids = infos.map((m) => m.id)
       commit(kind, ids)
       useModelCatalog.setState({

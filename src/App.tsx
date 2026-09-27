@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ImageAttachment } from '@/types'
 import { pushBackHandler, handleBackPress } from '@/lib/backStack'
 import { useActiveConversation, useConversations } from '@/lib/conversations'
+import { useMemory } from '@/lib/memory'
 import { minimizeApp, onAndroidBack, onAppResume } from '@/lib/nativeShell'
 import { getReadiness } from '@/lib/readiness'
 import { isConfigured, useSettings } from '@/lib/settings'
@@ -12,6 +13,8 @@ import { useChat } from '@/lib/useChat'
 import { ChatHeader } from '@/ui/ChatHeader'
 import { Composer } from '@/ui/Composer'
 import { DebugConsole } from '@/ui/DebugConsole'
+import { FeatureSheet } from '@/ui/FeatureSheet'
+import { MemorySheet } from '@/ui/MemorySheet'
 import { MessageList } from '@/ui/MessageList'
 import { SettingsDialog } from '@/ui/SettingsDialog'
 import { SetupDialog } from '@/ui/SetupDialog'
@@ -31,6 +34,7 @@ export default function App() {
   const settings = useSettings((s) => s.settings)
   const loaded = useConversations((s) => s.loaded)
   const load = useConversations((s) => s.load)
+  const loadMemory = useMemory((s) => s.load)
   const conversation = useActiveConversation()
   const { send, stop, regenerate, editAndResend, removeMessage, isStreaming } = useChat()
 
@@ -38,22 +42,19 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [debugOpen, setDebugOpen] = useState(false)
   const [setupOpen, setSetupOpen] = useState(false)
+  /** Шторки чата: переключатели функций и записи памяти (Android-паттерн). */
+  const [featuresOpen, setFeaturesOpen] = useState(false)
+  const [memoryOpen, setMemoryOpen] = useState(false)
 
   const readiness = useMemo(() => getReadiness(settings), [settings])
   const blockingIssue = readiness.issues.find((i) => i.severity === 'error')
   /** Минимум для общения: адрес API + ключ + модель (см. isConfigured). */
   const configured = useMemo(() => isConfigured(settings), [settings])
 
-  const toolsHint = useMemo(() => {
-    const hints: string[] = []
-    if (settings.search.enabled) hints.push('web_search')
-    if (settings.image.enabled) hints.push('generate_image')
-    return hints
-  }, [settings.search.enabled, settings.image.enabled])
-
   useEffect(() => {
     void load()
-  }, [load])
+    void loadMemory()
+  }, [load, loadMemory])
 
   // Тихая проверка обновлений при запуске (не чаще раза в 6 часов,
   // «пропущенные» версии не предлагаются повторно).
@@ -75,8 +76,8 @@ export default function App() {
 
   // модальные окна прячут мобильный сайдбар
   useEffect(() => {
-    if (settingsOpen || debugOpen || setupOpen) setSidebarOpen(false)
-  }, [settingsOpen, debugOpen, setupOpen])
+    if (settingsOpen || debugOpen || setupOpen || featuresOpen || memoryOpen) setSidebarOpen(false)
+  }, [settingsOpen, debugOpen, setupOpen, featuresOpen, memoryOpen])
 
   // модальные окна взаимоисключающие: открывая одно, закрываем остальные
   const openSettings = () => {
@@ -170,6 +171,8 @@ export default function App() {
           onOpenSidebar={() => setSidebarOpen(true)}
           onOpenSettings={openSettings}
           onOpenDebug={openDebug}
+          onOpenFeatures={() => setFeaturesOpen(true)}
+          onOpenMemory={() => setMemoryOpen(true)}
         />
 
         {configured ? (
@@ -193,7 +196,7 @@ export default function App() {
           disabledReason={
             blockingIssue ? `${blockingIssue.message} ${blockingIssue.fix}` : undefined
           }
-          toolsHint={toolsHint}
+          onOpenFeatures={() => setFeaturesOpen(true)}
           sendOnEnter={settings.ui.sendOnEnter}
           model={conversation?.model || settings.model}
           onSend={handleSend}
@@ -212,6 +215,12 @@ export default function App() {
         onOpenDebug={openDebug}
       />
       <DebugConsole open={debugOpen} onClose={() => setDebugOpen(false)} />
+      <FeatureSheet
+        open={featuresOpen}
+        onClose={() => setFeaturesOpen(false)}
+        onOpenMemory={() => setMemoryOpen(true)}
+      />
+      <MemorySheet open={memoryOpen} onClose={() => setMemoryOpen(false)} />
       <UpdateDialog />
       <Toaster />
     </div>

@@ -3,6 +3,7 @@ import { pushBackHandler } from '@/lib/backStack'
 import { copyText } from '@/lib/clipboard'
 import { useConversations } from '@/lib/conversations'
 import { conversationToMarkdown, safeFileName } from '@/lib/exportChat'
+import { FEATURES, isFeatureAvailable, isFeatureOn } from '@/lib/features'
 import { saveTextFile } from '@/lib/files'
 import { issuesSignature, useNotices } from '@/lib/notices'
 import type { Readiness } from '@/lib/readiness'
@@ -13,14 +14,15 @@ import { cn } from '@/lib/utils'
 import type { Conversation } from '@/types'
 import {
   IconAlert,
+  IconBrain,
   IconBug,
   IconCopy,
+  IconDots,
   IconDownload,
-  IconGlobe,
-  IconImage,
   IconMenu,
   IconRefresh,
   IconSettings,
+  IconSliders,
   IconTrash,
   IconX,
 } from './icons'
@@ -34,6 +36,10 @@ interface ChatHeaderProps {
   onOpenSidebar: () => void
   onOpenSettings: () => void
   onOpenDebug: () => void
+  /** Шторка «Функции» (поиск, картинки, инструменты, память) */
+  onOpenFeatures: () => void
+  /** Шторка «Память»: записи, экспорт, очистка */
+  onOpenMemory: () => void
 }
 
 export function ChatHeader({
@@ -44,6 +50,8 @@ export function ChatHeader({
   onOpenSidebar,
   onOpenSettings,
   onOpenDebug,
+  onOpenFeatures,
+  onOpenMemory,
 }: ChatHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -71,6 +79,12 @@ export function ChatHeader({
   const errors = readiness.issues.filter((i) => i.severity === 'error')
   const warnings = readiness.issues.filter((i) => i.severity === 'warning')
 
+  // Активные функции — те же флаги, что и в чипах композера: в шапке видно,
+  // что сейчас уходит в запрос (поиск, картинки, память, инструменты).
+  const activeFeatures = FEATURES.filter(
+    (f) => f.group !== 'view' && isFeatureOn(settings, f) && isFeatureAvailable(settings, f),
+  )
+
   // Верхнее предупреждение закрывается крестиком и не возвращается,
   // пока текст предупреждения не изменится.
   const warningsSignature = issuesSignature(warnings)
@@ -96,8 +110,9 @@ export function ChatHeader({
           <div className="flex items-center gap-1.5 text-[11px] text-neutral-500 dark:text-neutral-400">
             <ModelSelect kind="chat" variant="chip" value={settings.model} onChange={(model) => update({ model })} />
             {busy && <span className="shrink-0 animate-pulse text-neutral-500 dark:text-neutral-400">генерирую…</span>}
-            {settings.search.enabled && <IconGlobe size={11} className="shrink-0" />}
-            {settings.image.enabled && <IconImage size={11} className="shrink-0" />}
+            {activeFeatures.map(({ id, icon: Icon, label }) => (
+              <Icon key={id} size={11} className="shrink-0" aria-label={label} />
+            ))}
           </div>
         </div>
 
@@ -147,10 +162,27 @@ export function ChatHeader({
             aria-label="Меню чата"
             aria-expanded={menuOpen}
           >
-            <IconMenu size={20} />
+            <IconDots size={20} />
           </button>
           {menuOpen && (
-            <div className="absolute right-0 z-20 mt-1 w-56 overflow-hidden rounded-xl border border-neutral-200 bg-white py-1 shadow-xl dark:border-neutral-700 dark:bg-neutral-900">
+            <div className="absolute right-0 z-20 mt-1 max-h-[70dvh] w-56 overflow-y-auto rounded-xl border border-neutral-200 bg-white py-1 shadow-xl dark:border-neutral-700 dark:bg-neutral-900">
+              <MenuItem
+                icon={<IconSliders size={15} />}
+                label="Функции"
+                onClick={() => {
+                  setMenuOpen(false)
+                  onOpenFeatures()
+                }}
+              />
+              <MenuItem
+                icon={<IconBrain size={15} />}
+                label="Память"
+                onClick={() => {
+                  setMenuOpen(false)
+                  onOpenMemory()
+                }}
+              />
+              <div className="my-1 h-px bg-neutral-200 dark:bg-neutral-800" />
               <MenuItem
                 icon={<IconCopy size={15} />}
                 label="Скопировать чат"

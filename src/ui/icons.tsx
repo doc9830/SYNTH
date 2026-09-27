@@ -177,3 +177,60 @@ export const IconGauge = (p: IconProps) => (
     <path d="m12 14 4-4" />
   </Icon>
 )
+
+/** Android-стиль «ещё»: три точки вертикально (меню в шапке). */
+export const IconDots = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="12" cy="5" r="1.4" fill="currentColor" />
+    <circle cx="12" cy="12" r="1.4" fill="currentColor" />
+    <circle cx="12" cy="19" r="1.4" fill="currentColor" />
+  </Icon>
+)
+
+/** Ползунки — «настроить функции». */
+export const IconSliders = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h10M18 18h2" />
+    <circle cx="16" cy="6" r="2" />
+    <circle cx="10" cy="12" r="2" />
+    <circle cx="16" cy="18" r="2" />
+  </Icon>
+)
+
+/** Память: мозг. */
+export const IconBrain = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-1.5 5.6A3 3 0 0 0 6.5 18 3 3 0 0 0 12 19.5V6a2 2 0 0 0-3-2Z" />
+    <path d="M15 4a3 3 0 0 1 3 3 3 3 0 0 1 1.5 5.6A3 3 0 0 1 17.5 18 3 3 0 0 1 12 19.5" />
+    <path d="M9 9h2M13 13h2" />
+  </Icon>
+)
+
+export const IconClock = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7v5l3.5 2" />
+  </Icon>
+)
+
+export const IconCalculator = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="5" y="3" width="14" height="18" rx="2" />
+    <path d="M8 7h8M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01M8.5 15h.01M12 15h.01M15.5 15h.01M9 18h6" />
+  </Icon>
+)
+
+export const IconHistory = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M3 12a9 9 0 1 0 3-6.7" />
+    <path d="M3 4v5h5" />
+    <path d="M12 8v4.5l3 1.8" />
+  </Icon>
+)
+
+export const IconLink = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1" />
+    <path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1" />
+  </Icon>
+)

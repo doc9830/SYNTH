@@ -13,6 +13,14 @@ export type SearchProviderId = 'keyless' | 'tavily' | 'brave' | 'searxng'
  */
 export type ImageProviderId = 'images-api' | 'chat-image'
 
+/**
+ * Откуда брать подключение для генерации изображений:
+ *  - inherit → как у чата (mode/baseUrl/apiKey основного подключения)
+ *  - direct  → свой Base URL и ключ (частый случай: чат на OpenRouter, картинки на OpenAI)
+ *  - proxy   → через наш backend (/api/image), ключ живёт на сервере
+ */
+export type ImageConnectionMode = 'inherit' | 'direct' | 'proxy'
+
 export interface SearchSettings {
   enabled: boolean
   provider: SearchProviderId
@@ -36,11 +44,47 @@ export interface ImageSettings {
   enabled: boolean
   /** images-api → /v1/images/generations, chat-image → /v1/chat/completions */
   provider: ImageProviderId
+  /**
+   * Своё подключение для картинок. Часто ключ и провайдер отличаются от чата
+   * (например, чат через OpenRouter, а картинки — через OpenAI напрямую).
+   * Пусто → берём основное подключение (mode/baseUrl/apiKey выше).
+   */
+  mode: ImageConnectionMode
+  baseUrl: string
+  apiKey: string
   model: string
   /** Кэш списка моделей из GET /v1/models (селектор image-моделей) */
   modelList: string[]
   size: string
   quality: 'low' | 'medium' | 'high'
+}
+
+/**
+ * Дополнительные инструменты модели (кроме поиска/картинок).
+ * Каждый — обычный tool call; выключенные не попадают в запрос.
+ */
+export interface ExtraToolsSettings {
+  /** Калькулятор: точная арифметика вместо «устного счёта» модели */
+  calculator: boolean
+  /** Текущая дата/время — модель их часто не знает */
+  currentTime: boolean
+  /** Поиск по прошлым чатам приложения */
+  chatHistory: boolean
+}
+
+/**
+ * Долговременная память: короткие факты о пользователе, которые живут
+ * между чатами и подмешиваются в системный промпт.
+ */
+export interface MemorySettings {
+  /** Подмешивать память в контекст и давать модели инструменты памяти */
+  enabled: boolean
+  /** После ответа тихо извлекать новые факты отдельным запросом к модели */
+  autoExtract: boolean
+  /** Сколько записей максимум подмешивать в один запрос */
+  maxInjected: number
+  /** Лимит символов блока памяти в системном промпте */
+  maxChars: number
 }
 
 export interface InterfaceSettings {
@@ -68,6 +112,8 @@ export interface Settings {
   setupDone: boolean
   search: SearchSettings
   image: ImageSettings
+  tools: ExtraToolsSettings
+  memory: MemorySettings
   ui: InterfaceSettings
 }
 
@@ -99,10 +145,26 @@ export const DEFAULT_SETTINGS: Settings = {
     // Картинки — опциональная функция: включается при выборе image-модели
     enabled: false,
     provider: 'images-api',
+    // своё подключение: 'inherit' → работает от основного
+    mode: 'inherit' as ImageConnectionMode,
+    baseUrl: '',
+    apiKey: '',
     model: '',
     modelList: [],
     size: '1024x1024',
     quality: 'low',
+  },
+  tools: {
+    calculator: true,
+    currentTime: true,
+    chatHistory: true,
+  },
+  memory: {
+    // Долговременная память: локальная, выключена пока пользователь не согласится
+    enabled: false,
+    autoExtract: true,
+    maxInjected: 12,
+    maxChars: 1200,
   },
   ui: {
     theme: 'system',
@@ -116,7 +178,7 @@ export const DEFAULT_SETTINGS: Settings = {
 interface SettingsState {
   settings: Settings
   update: (patch: Partial<Settings>) => void
-  updateSection: <K extends 'search' | 'image' | 'ui'>(
+  updateSection: <K extends 'search' | 'image' | 'tools' | 'memory' | 'ui'>(
     section: K,
     patch: Partial<Settings[K]>,
   ) => void
@@ -142,7 +204,7 @@ export const useSettings = create<SettingsState>()(
     }),
     {
       name: STORAGE_KEY,
-      version: 2,
+      version: 3,
       // принимаем сохранённое как есть, недостающие поля добирает merge() —
       // так пользователь не теряет ключ и настройки при обновлении приложения
       migrate: (persisted) => persisted as Partial<SettingsState>,
@@ -174,10 +236,29 @@ export const useSettings = create<SettingsState>()(
               : legacyProvider === 'chat-image' || legacyProvider === 'images-api'
                 ? legacyProvider
                 : DEFAULT_SETTINGS.image.provider
+        const legacyImageMode = persistedImage?.mode
+        const imageMode: ImageConnectionMode =
+          legacyImageMode === 'direct' || legacyImageMode === 'proxy' ? legacyImageMode : 'inherit'
         const image: ImageSettings = {
           ...DEFAULT_SETTINGS.image,
           ...(persistedImage ?? {}),
           provider: imageProvider,
+          mode: imageMode,
+          // старые сохранения: своего подключения для картинок ещё не было
+          baseUrl: String(persistedImage?.baseUrl ?? ''),
+          apiKey: String(persistedImage?.apiKey ?? ''),
+        }
+
+        const persistedTools = p.settings?.tools
+        const tools: ExtraToolsSettings = {
+          ...DEFAULT_SETTINGS.tools,
+          ...(persistedTools ?? {}),
+        }
+
+        const persistedMemory = p.settings?.memory
+        const memory: MemorySettings = {
+          ...DEFAULT_SETTINGS.memory,
+          ...(persistedMemory ?? {}),
         }
 
         const merged: Settings = {
@@ -185,6 +266,8 @@ export const useSettings = create<SettingsState>()(
           ...(p.settings ?? {}),
           search,
           image,
+          tools,
+          memory,
           ui: { ...DEFAULT_SETTINGS.ui, ...(p.settings?.ui ?? {}) },
         }
         // Уже настроенные пользователи онбординг видеть не должны.

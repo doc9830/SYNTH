@@ -1,15 +1,22 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
-import type { Conversation } from '@/types'
+import type { Conversation, MemoryEntry } from '@/types'
 
 const DB_NAME = 'deepseek-chat'
-const DB_VERSION = 1
+const DB_VERSION = 2
 const STORE_CONVERSATIONS = 'conversations'
+const STORE_MEMORIES = 'memories'
 const STORE_META = 'meta'
 
 interface ChatDB extends DBSchema {
   conversations: {
     key: string
     value: Conversation
+    indexes: { byUpdatedAt: number }
+  }
+  /** Долговременная память: короткие факты о пользователе */
+  memories: {
+    key: string
+    value: MemoryEntry
     indexes: { byUpdatedAt: number }
   }
   meta: {
@@ -26,6 +33,10 @@ function getDB(): Promise<IDBPDatabase<ChatDB>> {
       upgrade(db) {
         if (!db.objectStoreNames.contains(STORE_CONVERSATIONS)) {
           const store = db.createObjectStore(STORE_CONVERSATIONS, { keyPath: 'id' })
+          store.createIndex('byUpdatedAt', 'updatedAt')
+        }
+        if (!db.objectStoreNames.contains(STORE_MEMORIES)) {
+          const store = db.createObjectStore(STORE_MEMORIES, { keyPath: 'id' })
           store.createIndex('byUpdatedAt', 'updatedAt')
         }
         if (!db.objectStoreNames.contains(STORE_META)) {
@@ -56,6 +67,37 @@ export async function deleteConversationFromDB(id: string): Promise<void> {
 export async function clearConversationsInDB(): Promise<void> {
   const db = await getDB()
   await db.clear(STORE_CONVERSATIONS)
+}
+
+/* ───────────────────────── Долговременная память ───────────────────────── */
+
+export async function loadMemoriesFromDB(): Promise<MemoryEntry[]> {
+  const db = await getDB()
+  const all = await db.getAll(STORE_MEMORIES)
+  return all.sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
+export async function putMemoryToDB(entry: MemoryEntry): Promise<void> {
+  const db = await getDB()
+  await db.put(STORE_MEMORIES, entry)
+}
+
+export async function deleteMemoryFromDB(id: string): Promise<void> {
+  const db = await getDB()
+  await db.delete(STORE_MEMORIES, id)
+}
+
+export async function clearMemoriesInDB(): Promise<void> {
+  const db = await getDB()
+  await db.clear(STORE_MEMORIES)
+}
+
+export async function replaceMemoriesInDB(entries: MemoryEntry[]): Promise<void> {
+  const db = await getDB()
+  const tx = db.transaction(STORE_MEMORIES, 'readwrite')
+  await tx.store.clear()
+  for (const entry of entries) await tx.store.put(entry)
+  await tx.done
 }
 
 /**

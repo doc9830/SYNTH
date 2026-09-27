@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { readPage, searchWeb } from '@/api'
 import { APP_NAME, APP_TAGLINE, APP_VERSION, RELEASES_URL } from '@/lib/appInfo'
 import { estimateStorage } from '@/lib/db'
+import { memoryStats, useMemory } from '@/lib/memory'
 import { useModelCatalog } from '@/lib/modelCatalog'
 import { PROVIDER_PRESETS, presetById } from '@/lib/providerPresets'
 import { getReadiness } from '@/lib/readiness'
@@ -97,6 +97,7 @@ function Segmented<T extends string>({
 const TABS = [
   { id: 'api', label: 'Подключение' },
   { id: 'search', label: 'Поиск' },
+  { id: 'functions', label: 'Функции' },
   { id: 'ui', label: 'Интерфейс' },
   { id: 'data', label: 'Данные' },
 ] as const
@@ -118,17 +119,14 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
 
   const [tab, setTab] = useState<TabId>('api')
   const [checking, setChecking] = useState(false)
-  const [searchTesting, setSearchTesting] = useState(false)
-  const [searchTest, setSearchTest] = useState<string | null>(null)
-  const [pageUrl, setPageUrl] = useState('')
-  const [pageTesting, setPageTesting] = useState(false)
-  const [pageTest, setPageTest] = useState<string | null>(null)
-  const [pageShot, setPageShot] = useState<string | null>(null)
   const [storage, setStorage] = useState<{ usage: number; quota: number } | null>(null)
   const ensureModels = useModelCatalog((s) => s.ensure)
   const refreshModels = useModelCatalog((s) => s.refresh)
   const checkUpdates = useUpdateStore((s) => s.check)
   const updateChecking = useUpdateStore((s) => s.checking)
+
+  const memoryEntries = useMemory((s) => s.entries)
+  const memoryInfo = useMemo(() => memoryStats(memoryEntries), [memoryEntries])
 
   const readiness = useMemo(() => getReadiness(settings), [settings])
 
@@ -167,60 +165,6 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
       notify(err instanceof Error ? err.message : String(err), 'error')
     } finally {
       setChecking(false)
-    }
-  }
-
-  const testSearch = async () => {
-    setSearchTesting(true)
-    setSearchTest(null)
-    try {
-      const results = await searchWeb('новости технологий за сегодня', settings)
-      const first = results[0]
-      const text = results.length
-        ? `Найдено источников: ${results.length} · движок: ${first?.source ?? '—'} · ${first?.title ?? ''}`
-        : 'Поиск ответил, но ничего не нашёл. Попробуйте другой движок или запрос.'
-      setSearchTest(text)
-      notify(
-        results.length ? `Поиск работает: ${results.length} источников` : text,
-        results.length ? 'success' : 'info',
-      )
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      setSearchTest(message)
-      notify(message, 'error')
-    } finally {
-      setSearchTesting(false)
-    }
-  }
-
-  const testPage = async () => {
-    const url = pageUrl.trim() || 'https://example.com'
-    setPageTesting(true)
-    setPageTest(null)
-    setPageShot(null)
-    try {
-      const page = await readPage(url, settings, { screenshot: true })
-      const shot = page.screenshot
-      const kb = shot ? Math.max(1, Math.round(shot.bytes / 1024)) : 0
-      setPageTest(
-        [
-          page.title ? `«${page.title}»` : 'заголовок не найден',
-          `текст ${page.text.length} симв.`,
-          `рендер: ${page.engine === 'chrome' ? 'Chrome' : 'статический HTML'}`,
-          shot ? `скриншот ${shot.width}×${shot.height}, ${kb} КБ` : 'без скриншота',
-          page.warnings.length ? `замечания: ${page.warnings.join('; ')}` : '',
-        ]
-          .filter(Boolean)
-          .join(' · '),
-      )
-      setPageShot(shot?.dataUrl ?? null)
-      notify(shot ? 'Страница прочитана, скриншот получен' : 'Страница прочитана, но без скриншота', shot ? 'success' : 'info')
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      setPageTest(message)
-      notify(message, 'error')
-    } finally {
-      setPageTesting(false)
     }
   }
 
@@ -401,6 +345,61 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
 
                 {settings.image.enabled && (
                   <>
+                    <Field
+                      label="Подключение для картинок"
+                      hint="Чат может работать через один провайдер, а картинки — через другой (частый случай: чат на OpenRouter, картинки на OpenAI)."
+                    >
+                      <Segmented
+                        value={settings.image.mode}
+                        onChange={(mode) => updateSection('image', { mode })}
+                        options={[
+                          { value: 'inherit', label: 'Как у чата' },
+                          { value: 'direct', label: 'Свой API' },
+                          { value: 'proxy', label: 'Через backend' },
+                        ]}
+                      />
+                    </Field>
+
+                    {settings.image.mode === 'direct' && (
+                      <>
+                        <Field
+                          label="Base URL для картинок"
+                          hint="Полный адрес API, например https://api.openai.com/v1. Хранится только на этом устройстве."
+                        >
+                          <input
+                            value={settings.image.baseUrl}
+                            onChange={(e) => updateSection('image', { baseUrl: e.target.value })}
+                            placeholder="https://api.openai.com/v1"
+                            className={inputCls}
+                            spellCheck={false}
+                          />
+                        </Field>
+                        <Field
+                          label="API key для картинок"
+                          hint="Используется только инструментом generate_image и не попадает в обычные чат-запросы."
+                        >
+                          <input
+                            type="password"
+                            value={settings.image.apiKey}
+                            onChange={(e) => updateSection('image', { apiKey: e.target.value })}
+                            placeholder="sk-…"
+                            className={inputCls}
+                            autoComplete="off"
+                            spellCheck={false}
+                          />
+                        </Field>
+                      </>
+                    )}
+
+                    {settings.image.mode === 'proxy' && (
+                      <p className="rounded-xl bg-neutral-100 px-3 py-2 text-[11px] leading-relaxed text-neutral-600 dark:bg-neutral-800/60 dark:text-neutral-300">
+                        Запросы идут на backend (
+                        <code className="rounded bg-white px-1 dark:bg-neutral-900">/api/image</code>
+                        ), ключ провайдера задаётся на сервере (
+                        <code className="rounded bg-white px-1 dark:bg-neutral-900">IMAGE_API_KEY</code>).
+                      </p>
+                    )}
+
                     <Field
                       label="Модель изображений"
                       hint="Список тот же, что и для чата — из GET /v1/models подключения. Если нужной модели нет, введите её id вручную в селекторе."
@@ -612,16 +611,6 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
                 />
               </Field>
 
-              <div className="flex flex-wrap items-center gap-2">
-                <button type="button" className={btnCls} onClick={testSearch} disabled={searchTesting}>
-                  {searchTesting ? <IconRefresh className="animate-spin" /> : null}
-                  Проверить поиск
-                </button>
-                {searchTest && (
-                  <span className="text-[11px] text-neutral-600 dark:text-neutral-300">{searchTest}</span>
-                )}
-              </div>
-
               <hr className="my-1 border-neutral-200 dark:border-neutral-800" />
 
               <Toggle
@@ -632,37 +621,108 @@ export function SettingsDialog({ open, onClose, onOpenDebug }: SettingsDialogPro
               />
 
               {settings.search.readPages && (
-                <>
-                  <Field
-                    label="Проверить чтение страницы"
-                    hint="Запрос идёт на backend (POST /api/page): он рендерит страницу и делает скриншот. Пусто = example.com."
-                  >
-                    <input
-                      value={pageUrl}
-                      onChange={(e) => setPageUrl(e.target.value)}
-                      placeholder="https://example.com"
-                      className={inputCls}
-                      spellCheck={false}
-                    />
-                  </Field>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button type="button" className={btnCls} onClick={testPage} disabled={pageTesting}>
-                      {pageTesting ? <IconRefresh className="animate-spin" /> : null}
-                      Открыть страницу
-                    </button>
-                    {pageTest && (
-                      <span className="text-[11px] text-neutral-600 dark:text-neutral-300">{pageTest}</span>
-                    )}
-                  </div>
-                  {pageShot && (
-                    <img
-                      src={pageShot}
-                      alt="Скриншот прочитанной страницы"
-                      className="max-h-64 w-auto rounded-xl border border-neutral-200 dark:border-neutral-700"
-                    />
-                  )}
-                </>
+                <p className="rounded-xl bg-neutral-100 px-3 py-2 text-[11px] leading-relaxed text-neutral-600 dark:bg-neutral-800/60 dark:text-neutral-300">
+                  Пришлите ссылку прямо в чат — модель сама вызовет{' '}
+                  <code className="rounded bg-white px-1 dark:bg-neutral-900">read_url</code> и вернёт
+                  текст, заголовки, ссылки и скриншот страницы. Для проверки достаточно отправить
+                  сообщение с адресом сайта.
+                </p>
               )}
+            </>
+          )}
+
+          {tab === 'functions' && (
+            <>
+              <p className="rounded-xl bg-neutral-100 px-3 py-2 text-[11px] leading-relaxed text-neutral-600 dark:bg-neutral-800/60 dark:text-neutral-300">
+                Включать функции удобнее в композере — кнопка «Настроить» под полем ввода, она же
+                доступна в меню «⋮» в шапке чата. Здесь — подробные параметры инструментов и памяти.
+              </p>
+
+              <div className="space-y-1 rounded-xl border border-neutral-200 px-3 py-2 dark:border-neutral-800">
+                <Toggle
+                  label="Калькулятор"
+                  hint="Модель считает точно: арифметику выполняет код, а не «устный счёт»."
+                  checked={settings.tools.calculator}
+                  onChange={(calculator) => updateSection('tools', { calculator })}
+                />
+                <Toggle
+                  label="Текущее время"
+                  hint="Модель узнаёт дату и время устройства — сама она их не знает."
+                  checked={settings.tools.currentTime}
+                  onChange={(currentTime) => updateSection('tools', { currentTime })}
+                />
+                <Toggle
+                  label="Поиск по прошлым чатам"
+                  hint="Инструмент search_chats: модель ищет по сохранённым диалогам этого устройства."
+                  checked={settings.tools.chatHistory}
+                  onChange={(chatHistory) => updateSection('tools', { chatHistory })}
+                />
+              </div>
+
+              <div className="space-y-4 rounded-2xl border border-neutral-200 p-3 dark:border-neutral-800">
+                <div>
+                  <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                    Долговременная память
+                  </p>
+                  <p className="mt-0.5 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-400">
+                    Короткие факты о вас — имя, город, стек, предпочтения — лежат в IndexedDB этого
+                    устройства и подмешиваются в системный промпт. Наружу они не отправляются.
+                  </p>
+                </div>
+
+                <Toggle
+                  label="Память включена"
+                  hint="Модель получает инструменты памяти (remember/forget) и видит уже сохранённые факты."
+                  checked={settings.memory.enabled}
+                  onChange={(enabled) => updateSection('memory', { enabled })}
+                />
+
+                {settings.memory.enabled && (
+                  <>
+                    <Toggle
+                      label="Запоминать автоматически"
+                      hint="После ответа приложение отдельным запросом вытаскивает новые факты и сохраняет их. Секреты (ключи, пароли) не сохраняются."
+                      checked={settings.memory.autoExtract}
+                      onChange={(autoExtract) => updateSection('memory', { autoExtract })}
+                    />
+
+                    <Field label={`Записей в один запрос: ${settings.memory.maxInjected}`}>
+                      <input
+                        type="range"
+                        min={1}
+                        max={40}
+                        step={1}
+                        value={settings.memory.maxInjected}
+                        onChange={(e) =>
+                          updateSection('memory', { maxInjected: Number(e.target.value) })
+                        }
+                        className="w-full accent-neutral-900 dark:accent-neutral-300"
+                      />
+                    </Field>
+
+                    <Field
+                      label={`Лимит символов в промпте: ${settings.memory.maxChars}`}
+                      hint="Сколько знаков блока памяти максимум уходит в системный промпт."
+                    >
+                      <input
+                        type="range"
+                        min={200}
+                        max={4000}
+                        step={100}
+                        value={settings.memory.maxChars}
+                        onChange={(e) => updateSection('memory', { maxChars: Number(e.target.value) })}
+                        className="w-full accent-neutral-900 dark:accent-neutral-300"
+                      />
+                    </Field>
+
+                    <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                      Сейчас сохранено записей: {memoryInfo.count}
+                      {memoryInfo.pinned ? `, из них закреплено ${memoryInfo.pinned}` : ''} ·{' '}
+                      {memoryInfo.chars} симв. Просмотр, экспорт и очистка — в меню «⋮» → «Память».
+                    </p>
+                  </>
+                )}
+              </div>
             </>
           )}
 

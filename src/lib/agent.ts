@@ -6,6 +6,7 @@ import type { ChatMessage, TokenUsage, ToolCallRecord } from '@/types'
 import type { Settings } from './settings'
 import { debugLog } from './debug'
 import { getModelCapabilities, prettyJson, uid } from './utils'
+import { buildMemoryContext } from './memory'
 
 /** Лимит последовательных tool calls, чтобы не уйти в бесконечный цикл. */
 export const MAX_TOOL_ITERATIONS = 8
@@ -51,8 +52,14 @@ export function buildWireMessages(history: ChatMessage[], settings: Settings): W
   const caps = getModelCapabilities(settings.model)
   const out: WireMessage[] = []
 
-  if (settings.systemPrompt.trim()) {
-    out.push({ role: 'system', content: settings.systemPrompt.trim() })
+  // Запрос к памяти строим по последнему вопросу пользователя:
+  // в контекст попадают закреплённые записи и самые близкие к теме.
+  const lastUser = [...history].reverse().find((m) => m.role === 'user')
+  const memoryBlock = buildMemoryContext(settings, lastUser?.content ?? '')
+  const systemParts = [settings.systemPrompt.trim(), memoryBlock].filter(Boolean)
+
+  if (systemParts.length) {
+    out.push({ role: 'system', content: systemParts.join('\n\n') })
   }
 
   for (const m of history) {

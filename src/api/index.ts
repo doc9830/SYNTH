@@ -12,7 +12,7 @@ import {
 import type { AssistantTurn, WireMessage, WireTool } from '@/providers/openai/types'
 import type { ModelInfo } from '@/providers/openai/client'
 import { createSearchProvider } from '@/providers/search'
-import { resolveTransport, toOpenAiTransport, type ResolvedTransport } from './transport'
+import { resolveTransport, toOpenAiTransport, type ResolvedTransport, type TransportKind } from './transport'
 
 export * from './transport'
 
@@ -29,13 +29,16 @@ export interface ChatTurnRequest {
 /** Wire-сообщения чата (OpenAI-совместимый протокол). */
 export type WireMessages = WireMessage[]
 
-function resolve(settings: Settings): ResolvedTransport {
+function resolve(settings: Settings, kind: TransportKind = 'chat'): ResolvedTransport {
   try {
-    return resolveTransport(settings)
+    return resolveTransport(settings, kind)
   } catch (err) {
     throw new ApiError({
       message: err instanceof Error ? err.message : String(err),
-      hint: 'Откройте Настройки → Подключение и заполните Base URL и API key (или переключитесь на proxy-режим).',
+      hint:
+        kind === 'image'
+          ? 'Проверьте подключение для картинок (Настройки → Подключение → Генерация изображений) или само основное подключение.'
+          : 'Откройте Настройки → Подключение и заполните Base URL и API key (или переключитесь на proxy-режим).',
     })
   }
 }
@@ -73,12 +76,41 @@ export async function listModels(settings: Settings, signal?: AbortSignal): Prom
  * Модели с ценами (если провайдер их отдаёт — OpenRouter, некоторые прокси).
  * Провайдеры без pricing возвращают только id, и это нормально:
  * интерфейс просто не показывает цену.
+ * kind = 'image' → список берётся из подключения для картинок.
  */
-export async function listModelInfos(settings: Settings, signal?: AbortSignal): Promise<ModelInfo[]> {
-  const resolved = resolve(settings)
+export async function listModelInfos(
+  settings: Settings,
+  signal?: AbortSignal,
+  kind: TransportKind = 'chat',
+): Promise<ModelInfo[]> {
+  const resolved = resolve(settings, kind)
   const transport: OpenAiTransport = toOpenAiTransport(resolved)
   const { fetchModels } = await import('@/providers/openai/client')
   return fetchModels(transport, signal)
+}
+
+/**
+ * Один нестримовый проход модели — для служебных задач интерфейса
+ * (извлечение фактов в память, проверки). Не для ответов пользователю.
+ */
+export async function chatOnce(
+  settings: Settings,
+  input: { messages: WireMessages; maxTokens?: number; temperature?: number; signal?: AbortSignal },
+): Promise<string> {
+  const transport = toOpenAiTransport(resolve(settings))
+  const { chatCompletion } = await import('@/providers/openai/client')
+  const turn = await chatCompletion(
+    transport,
+    {
+      model: settings.model,
+      messages: input.messages,
+      stream: false,
+      temperature: input.temperature ?? 0,
+      max_tokens: input.maxTokens,
+    },
+    { signal: input.signal },
+  )
+  return turn.content
 }
 
 /** База backend-прокси: пусто → эндпоинты текущего сайта (/api/…). */
@@ -322,13 +354,13 @@ export async function readPage(
   }
 }
 
-/** Генерация изображений через RuAPI (или backend proxy). */
+/** Генерация изображений: своё подключение для картинок → основное. */
 export async function generateImages(
   settings: Settings,
   input: { model: string; prompt: string; size?: string; quality?: 'low' | 'medium' | 'high' },
   signal?: AbortSignal,
 ): Promise<{ images: string[]; text: string; provider: string }> {
-  const resolved = resolve(settings)
+  const resolved = resolve(settings, 'image')
   const { generateImage } = await import('@/providers/openai/images')
   return generateImage(
     toOpenAiTransport(resolved),

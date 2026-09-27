@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { fileToAttachment, isImageFile } from '@/lib/attachments'
+import { PRIMARY_FEATURES, isFeatureOn, setFeature, type Feature } from '@/lib/features'
+import { useSettings } from '@/lib/settings'
 import { getModelCapabilities } from '@/lib/utils'
 import { notify } from '@/lib/toast'
 import type { ImageAttachment } from '@/types'
 import { cn } from '@/lib/utils'
-import { IconImage, IconPaperclip, IconSend, IconStop, IconUpload, IconX } from './icons'
+import { IconImage, IconPaperclip, IconSend, IconSliders, IconStop, IconUpload, IconX } from './icons'
 import { Sheet } from './Sheet'
 
 /** Черновики по чатам: переключение чата не должно терять набранный текст. */
@@ -16,9 +18,10 @@ interface ComposerProps {
   /** можно ли отправлять (проверка настроек) */
   canSend: boolean
   disabledReason?: string
-  toolsHint: string[]
   sendOnEnter: boolean
   model: string
+  /** Открыть шторку «Функции»: там остальные переключатели */
+  onOpenFeatures: () => void
   onSend: (text: string, attachments: ImageAttachment[]) => void
   onStop: () => void
 }
@@ -28,12 +31,13 @@ export function Composer({
   busy,
   canSend,
   disabledReason,
-  toolsHint,
   sendOnEnter,
   model,
+  onOpenFeatures,
   onSend,
   onStop,
 }: ComposerProps) {
+  const settings = useSettings((s) => s.settings)
   const [text, setText] = useState('')
   const [attachments, setAttachments] = useState<ImageAttachment[]>([])
   const [dragging, setDragging] = useState(false)
@@ -190,7 +194,7 @@ export function Composer({
             disabled={!canSend}
             title={caps.vision ? 'Прикрепить изображение' : `Модель ${model} не поддерживает изображения на входе`}
             aria-label="Прикрепить изображение"
-            className="rounded-xl p-2.5 text-neutral-500 transition active:bg-neutral-200/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-neutral-400 dark:active:bg-neutral-800"
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-xl text-neutral-500 transition active:bg-neutral-200/70 disabled:cursor-not-allowed disabled:opacity-40 dark:text-neutral-400 dark:active:bg-neutral-800"
           >
             {caps.vision ? <IconPaperclip size={19} /> : <IconImage size={19} />}
           </button>
@@ -205,7 +209,7 @@ export function Composer({
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
-            className="max-h-[260px] min-h-[38px] flex-1 resize-none bg-transparent px-2 py-2 text-[15px] leading-relaxed text-neutral-800 outline-none placeholder:text-neutral-400 disabled:cursor-not-allowed dark:text-neutral-100"
+            className="max-h-[260px] min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-[15px] leading-relaxed text-neutral-800 outline-none placeholder:text-neutral-400 disabled:cursor-not-allowed dark:text-neutral-100"
           />
 
           {busy ? (
@@ -213,7 +217,7 @@ export function Composer({
               type="button"
               onClick={onStop}
               title="Остановить генерацию"
-              className="rounded-xl bg-neutral-800 p-2 text-white transition hover:bg-neutral-900 dark:bg-neutral-200 dark:text-neutral-900 dark:hover:bg-white"
+              className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-neutral-800 text-white transition hover:bg-neutral-900 dark:bg-neutral-200 dark:text-neutral-900 dark:hover:bg-white"
             >
               <IconStop size={18} />
             </button>
@@ -223,24 +227,31 @@ export function Composer({
               onClick={submit}
               disabled={!canSend || !text.trim()}
               title="Отправить"
-              className="rounded-3xl bg-neutral-900 p-2 text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-white"
+              className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-neutral-900 text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-white"
             >
               <IconSend size={18} />
             </button>
           )}
         </div>
 
-        <div className="mt-1.5 flex flex-wrap items-center justify-end gap-2 px-1 text-[11px] text-neutral-400">
-          <span className="flex flex-wrap items-center gap-1.5">
-            {toolsHint.map((t) => (
-              <span
-                key={t}
-                className="rounded-full border border-neutral-200 px-2 py-0.5 text-neutral-500 dark:border-neutral-700 dark:text-neutral-400"
-              >
-                {t}
-              </span>
-            ))}
-          </span>
+        <div className="mt-2 flex items-center gap-1.5 overflow-x-auto pb-0.5">
+          {PRIMARY_FEATURES.map((feature) => (
+            <FeatureChip
+              key={feature.id}
+              feature={feature}
+              on={isFeatureOn(settings, feature)}
+              onToggle={() => setFeature(feature, !isFeatureOn(settings, feature))}
+            />
+          ))}
+          <button
+            type="button"
+            onClick={onOpenFeatures}
+            title="Все функции: память, инструменты, вид ленты"
+            className="inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-full border border-dashed border-neutral-300 px-2.5 text-[11.5px] text-neutral-600 transition active:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-300 dark:active:bg-neutral-800"
+          >
+            <IconSliders size={13} />
+            Настроить
+          </button>
         </div>
       </div>
 
@@ -343,6 +354,40 @@ function AttachRow({
         <span className="block text-sm text-neutral-800 dark:text-neutral-100">{label}</span>
         <span className="block text-[11px] text-neutral-500 dark:text-neutral-400">{hint}</span>
       </span>
+    </button>
+  )
+}
+
+
+/**
+ * Чип быстрого переключения функции под полем ввода.
+ * Включённая функция залита, выключенная — только контур: видно с одного взгляда.
+ */
+function FeatureChip({
+  feature,
+  on,
+  onToggle,
+}: {
+  feature: Feature
+  on: boolean
+  onToggle: () => void
+}) {
+  const Icon = feature.icon
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      title={`${feature.label}. ${feature.hint}`}
+      aria-pressed={on}
+      className={cn(
+        'inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-[11.5px] transition active:opacity-80',
+        on
+          ? 'border-neutral-900 bg-neutral-900 text-white dark:border-neutral-200 dark:bg-neutral-200 dark:text-neutral-900'
+          : 'border-neutral-200 text-neutral-600 dark:border-neutral-700 dark:text-neutral-300',
+      )}
+    >
+      <Icon size={13} />
+      {feature.chip}
     </button>
   )
 }

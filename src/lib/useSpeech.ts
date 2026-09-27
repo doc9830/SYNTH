@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { debugLog } from './debug'
 import { notify } from './toast'
 import {
   describeTtsNetwork,
@@ -36,7 +37,8 @@ interface SpeechState {
   chunkCount: number
   /** Нормализованный текст текущего фрагмента — по нему идёт подсветка. */
   chunkKey: string | null
-  ensureProbe: () => Promise<void>
+  /** `force` — проверить движок заново (например, после установки голоса). */
+  ensureProbe: (force?: boolean) => Promise<void>
   toggle: (messageId: string, markdown: string) => Promise<void>
   stop: () => Promise<void>
   release: () => Promise<void>
@@ -55,40 +57,54 @@ const IDLE = {
   chunkKey: null,
 }
 
-/** Проверяем и предупреждаем один раз за запуск приложения. */
-let probed = false
+/** Проверяем и предупреждаем один раз за запуск приложения (force — ещё раз). */
+let probeRun: Promise<void> | null = null
 let warnedUnavailable = false
 let warnedNetwork = false
+
+const UNSUPPORTED: TtsInfo = { available: false, reason: 'unsupported' }
+
+/** Пауза: нужна, чтобы не задерживать ответ пользователю бесконечным ожиданием. */
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/**
+ * Проверка движка и голоса. Результат кладём в стор, причину — в Debug Console:
+ * по этой записи видно, почему озвучка недоступна именно на этом устройстве.
+ */
+async function runProbe(set: (patch: Partial<SpeechState>) => void): Promise<void> {
+  if (!ttsSupported()) {
+    set({ info: { available: false, reason: 'unsupported' } })
+    return
+  }
+  let info: TtsInfo
+  try {
+    info = await probeTts()
+  } catch {
+    info = { available: false, reason: 'speech-error' }
+  }
+  set({ info })
+  debugLog('info', 'Озвучка: проверка системного синтеза речи', [info])
+
+  const unavailable = describeTtsUnavailable(info)
+  if (unavailable && !warnedUnavailable) {
+    warnedUnavailable = true
+    notify(unavailable, 'info')
+  }
+  const network = describeTtsNetwork(info)
+  if (network && !warnedNetwork) {
+    warnedNetwork = true
+    notify(network, 'info')
+  }
+}
 
 export const useSpeech = create<SpeechState>((set, get) => ({
   info: null,
   ...IDLE,
 
-  ensureProbe: async () => {
-    if (probed) return
-    probed = true
-    if (!ttsSupported()) {
-      set({ info: { available: false, reason: 'unsupported' } })
-      return
-    }
-    let info: TtsInfo
-    try {
-      info = await probeTts()
-    } catch {
-      info = { available: false, reason: 'speech-error' }
-    }
-    set({ info })
-
-    const unavailable = describeTtsUnavailable(info)
-    if (unavailable && !warnedUnavailable) {
-      warnedUnavailable = true
-      notify(unavailable, 'info')
-    }
-    const network = describeTtsNetwork(info)
-    if (network && !warnedNetwork) {
-      warnedNetwork = true
-      notify(network, 'info')
-    }
+  ensureProbe: (force = false) => {
+    if (force) probeRun = null
+    probeRun ??= runProbe((patch) => set(patch))
+    return probeRun
   },
 
   toggle: async (messageId, markdown) => {
@@ -98,6 +114,25 @@ export const useSpeech = create<SpeechState>((set, get) => ({
       return
     }
     await get().stop()
+
+    // Движок проверяем до чтения: нажатие на приглушённую кнопку должно
+    // объяснить, чего не хватает, а не молчать.
+    if (!get().info) await get().ensureProbe()
+    if (!canSpeak(get().info)) {
+      // Голос мог появиться только что — пользователь сходил в настройки Android
+      // и поставил голосовые данные. Даём движку последний шанс: проверка, если
+      // голос есть, отвечает мгновенно, поэтому чтение начнётся с этого же
+      // нажатия. Если голоса нет, через 400 мс показываем причину.
+      await Promise.race([get().ensureProbe(true), delay(400)])
+      if (!canSpeak(get().info)) {
+        notify(
+          describeTtsUnavailable(get().info ?? UNSUPPORTED) ??
+            'Озвучка на этом устройстве недоступна.',
+          'info',
+        )
+        return
+      }
+    }
 
     const chunks = speechChunks(markdown)
     if (!chunks.length) {

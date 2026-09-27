@@ -5,6 +5,7 @@ import { exportMarkdown, filesFromMarkdown, joinedFileFromMarkdown, slugify } fr
 import { describeStreamPhase } from '@/lib/streamPhase'
 import { selectStreamPatch, useStreamDraft } from '@/lib/streamDraft'
 import { notify } from '@/lib/toast'
+import { describeTtsUnavailable, ttsSupported } from '@/lib/tts'
 import { canSpeak, useSpeech } from '@/lib/useSpeech'
 import { cn, formatTime, truncate } from '@/lib/utils'
 import type { ChatMessage } from '@/types'
@@ -47,12 +48,14 @@ function ActionButton({
   disabled,
   children,
   danger,
+  className,
 }: {
   title: string
   onClick: () => void
   disabled?: boolean
   children: ReactNode
   danger?: boolean
+  className?: string
 }) {
   return (
     <button
@@ -64,6 +67,7 @@ function ActionButton({
       className={cn(
         'rounded-lg p-1.5 text-neutral-500 transition hover:bg-neutral-200/70 hover:text-neutral-800 disabled:cursor-not-allowed disabled:opacity-40 dark:text-neutral-400 dark:hover:bg-neutral-700/60 dark:hover:text-neutral-100',
         danger && 'hover:bg-red-100 hover:text-red-700 dark:hover:bg-red-950/60 dark:hover:text-red-300',
+        className,
       )}
     >
       {children}
@@ -112,20 +116,31 @@ function CopyButton({ text }: { text: string }) {
 
 /**
  * «Озвучить» / «Стоп»: читает ответ системным синтезом речи (задача 06).
- * Кнопки нет вовсе, если движка/русского голоса нет — вместо неработающей
- * кнопки пользователь один раз видит пояснение (см. useSpeech.ensureProbe).
+ *
+ * Кнопка видна всегда, когда платформа умеет говорить, — даже если движка или
+ * русского голоса нет: в этом случае она приглушена, а нажатие объясняет, чего
+ * не хватает. Раньше кнопка просто исчезала, и найти озвучку было невозможно
+ * (правка после отзыва пользователя: «не вижу режима ответа голосом»).
  */
 function SpeakButton({ message }: { message: ChatMessage }) {
   const info = useSpeech((s) => s.info)
   const status = useSpeech((s) => s.status)
   const speakingId = useSpeech((s) => s.messageId)
   const toggle = useSpeech((s) => s.toggle)
-  if (!canSpeak(info)) return null
+  // Совсем нет синтеза речи на платформе — кнопку не рисуем.
+  if (!ttsSupported()) return null
 
+  const ready = canSpeak(info)
   const active = speakingId === message.id && status !== 'idle'
+  const title = active
+    ? 'Остановить озвучку'
+    : ready
+      ? 'Озвучить ответ'
+      : (info && describeTtsUnavailable(info)) || 'Озвучка: проверяем системный синтез речи…'
   return (
     <ActionButton
-      title={active ? 'Остановить озвучку' : 'Озвучить ответ'}
+      title={title}
+      className={ready || active ? undefined : 'opacity-50'}
       onClick={() => void toggle(message.id, message.content)}
     >
       {active ? <IconStop size={16} /> : <IconVolume size={16} />}
@@ -270,7 +285,7 @@ function UserMessage({
         )}
 
         {!editing && (
-          <div className="flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+          <div className="msg-actions flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
             <span className="mr-1 text-[11px] text-neutral-400">{formatTime(message.createdAt)}</span>
             <CopyButton text={message.content} />
             <ShareButtons message={message} />
@@ -381,7 +396,7 @@ function AssistantMessage({
         {canContinue && <ContinueButton disabled={busy} onClick={onContinue} />}
 
         {(message.content || toolCalls.length > 0 || message.status !== 'streaming') && (
-          <div className="mt-1 flex flex-wrap items-center gap-0.5 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+          <div className="msg-actions mt-1 flex flex-wrap items-center gap-0.5 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
             <span className="mr-1 text-[11px] text-neutral-400">
               {formatTime(message.createdAt)}
               {message.model ? ` · ${message.model}` : ''}

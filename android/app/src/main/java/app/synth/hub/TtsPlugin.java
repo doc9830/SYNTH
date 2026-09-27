@@ -116,9 +116,30 @@ public class TtsPlugin extends Plugin implements TextToSpeech.OnInitListener {
         resolveWaiting();
     }
 
-    /** Голос: русский по умолчанию, но из фактически доступных на устройстве. */
+    /**
+     * Голос: русский по умолчанию, но из фактически доступных на устройстве.
+     *
+     * Порядок важен. Сначала смотрим список голосов: русский голос часто есть
+     * даже тогда, когда офлайн-данные для него не скачаны, и
+     * `isLanguageAvailable()` в этом случае отвечает `LANG_MISSING_DATA`.
+     * Раньше такой телефон считался «без русского голоса» и озвучка пряталась
+     * целиком, хотя сетевой голос исправно читает. Теперь берём его и один раз
+     * предупреждаем, что нужен интернет (см. `needsNetwork`).
+     */
     private void pickVoice() {
         engineName = tts.getDefaultEngine();
+
+        Voice best = chooseRussianVoice();
+        if (best != null && tts.setVoice(best) == TextToSpeech.SUCCESS) {
+            voiceName = best.getName();
+            Locale locale = best.getLocale();
+            voiceLanguage = locale != null ? locale.toLanguageTag() : "ru";
+            voiceNeedsNetwork = best.isNetworkConnectionRequired();
+            ready = true;
+            initError = null;
+            return;
+        }
+
         Locale ru = Locale.forLanguageTag("ru-RU");
         if (isUnavailable(tts.isLanguageAvailable(ru))) {
             ru = Locale.forLanguageTag("ru");
@@ -130,20 +151,15 @@ public class TtsPlugin extends Plugin implements TextToSpeech.OnInitListener {
             return;
         }
 
-        Voice best = chooseRussianVoice();
-        if (best != null) {
-            tts.setVoice(best);
-            voiceName = best.getName();
-            Locale locale = best.getLocale();
-            voiceLanguage = locale != null ? locale.toLanguageTag() : "ru";
-            voiceNeedsNetwork = best.isNetworkConnectionRequired();
-        } else {
-            // Голосов списком движок не отдал — читаем языком по умолчанию.
-            tts.setLanguage(ru);
-            voiceLanguage = ru.toLanguageTag();
-            voiceNeedsNetwork = false;
+        // Голосов списком движок не отдал — читаем языком по умолчанию.
+        if (isUnavailable(tts.setLanguage(ru))) {
+            ready = false;
+            initError = "NO_RU_VOICE";
+            Logger.warn(TAG, "setLanguage(ru) не принят движком");
+            return;
         }
-
+        voiceLanguage = ru.toLanguageTag();
+        voiceNeedsNetwork = false;
         ready = true;
         initError = null;
     }

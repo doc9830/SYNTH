@@ -51,11 +51,11 @@ function CodeBlock({ language, code, children }: { language: string; code: strin
 
   return (
     <div className="group relative my-3 overflow-hidden rounded-xl border border-neutral-700/60 bg-[#0f172a]">
-      <div className="flex items-center justify-between gap-2 border-b border-neutral-700/60 px-3 py-1.5">
-        <span className="font-mono text-[11px] uppercase tracking-wide text-neutral-400">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-700/60 px-3 py-1.5">
+        <span className="min-w-0 truncate font-mono text-[11px] uppercase tracking-wide text-neutral-400">
           {language || 'code'}
         </span>
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1 whitespace-nowrap">
           <button
             type="button"
             onClick={onCopy}

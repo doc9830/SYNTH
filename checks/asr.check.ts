@@ -29,6 +29,7 @@ import {
   probeAsr,
   requestMicAccess,
   stopDictation,
+  type AsrUnavailableReason,
 } from '@/lib/asr'
 import { nativeAsrAvailable, nativeAsrInfo } from '@/lib/nativeAsr'
 import {
@@ -107,6 +108,7 @@ const codes = [
   'SILENCE',
   'NETWORK',
   'PERMISSION_DENIED',
+  'CLIENT',
   'BUSY',
   'AUDIO',
   'SERVER',
@@ -132,6 +134,14 @@ check(
 )
 check('нет офлайн-пакета — сказано, где его скачать', /офлайн-пакет/.test(asrErrorMessage('NO_PACK')))
 check('перегруженный сервис просит подождать', /попробуйте/i.test(asrErrorMessage('TOO_MANY')))
+// ERROR_CLIENT приходит, когда система не подключила распознаватель: обычно в
+// настройках Android не выбран сервис распознавания речи. Раньше этот код
+// попадал в общую фразу «не удалось распознать речь» и ни о чём не говорил.
+check(
+  'неподключённый системный распознаватель объясняется отдельно',
+  /не подключился/i.test(asrErrorMessage('CLIENT')) && /настройках Android/i.test(asrErrorMessage('CLIENT')),
+)
+check('код CLIENT не выдаётся за неудачное распознавание', asrErrorMessage('CLIENT') !== asrErrorMessage())
 
 // ── Отказ старта: причина не подменяется общей фразой ──────────────────
 
@@ -143,7 +153,15 @@ check(
     asrFailureCode(null) === null &&
     asrFailureCode('') === null,
 )
-const startFailures = [{ code: 'PERMISSION_DENIED' }, { code: 'NO_SERVICE' }, { code: 'NO_START' }, {}, undefined]
+const startFailures = [
+  { code: 'PERMISSION_DENIED' },
+  { code: 'NO_SERVICE' },
+  { code: 'CREATE_FAILED' },
+  { code: 'CLIENT' },
+  { code: 'NO_START' },
+  {},
+  undefined,
+]
 check(
   'любой отказ старта объяснён по-русски',
   startFailures.every((error) => /[а-яА-Я]/.test(describeStartFailure(error))),
@@ -161,6 +179,11 @@ check(
   describeStartFailure({ code: 'ЧТО-ТО' }) === asrErrorMessage('NO_START') &&
     /попробуйте ещё раз/i.test(describeStartFailure(undefined)),
 )
+check(
+  'отказ создания распознавателя не выдаётся за отсутствие сервиса',
+  /создать распознаватель/.test(describeStartFailure({ code: 'CREATE_FAILED' })) &&
+    describeStartFailure({ code: 'CREATE_FAILED' }) !== describeStartFailure({ code: 'NO_SERVICE' }),
+)
 check('подпись кнопки в покое объясняет тапы', describeDictationButton(false).includes(DICTATION_TAP_HINT))
 check('во время записи кнопка говорит «закончить»', describeDictationButton(true) === 'Закончить запись')
 check(
@@ -169,12 +192,34 @@ check(
 )
 check(
   'нет сервиса распознавания — понятное сообщение, не тишина',
-  describeAsrUnavailable({ available: false, reason: 'no-service' })?.includes('недоступно') === true &&
+  describeAsrUnavailable({ available: false, reason: 'NO_SERVICE' })?.includes('недоступно') === true &&
     describeAsrUnavailable(null)?.includes('недоступно') === true,
 )
 check(
   'в браузере сказано, что голосовой ввод живёт в приложении',
   describeAsrUnavailable({ available: false, reason: 'unsupported' })?.includes('Android') === true,
+)
+// 1.7.3: причина недоступности была одной фразой «распознавание недоступно» —
+// «сервиса нет» и «офлайн-движок молчит» выглядели одинаково, хотя делать нужно
+// разное. Именно на это жаловались: сообщение приходило при живом Gboard.
+const unavailableReasons: AsrUnavailableReason[] = ['NO_SERVICE', 'ONDEVICE_SILENT', 'PLUGIN_ERROR']
+const unavailableTexts = unavailableReasons.map(
+  (reason) => describeAsrUnavailable({ available: false, reason }) ?? '',
+)
+check(
+  'каждая причина недоступности объяснена словами',
+  unavailableTexts.every((text) => text.length > 20 && /[а-яА-Я]/.test(text)),
+)
+check(
+  'причины недоступности не подменяются друг другом',
+  new Set(unavailableTexts).size === unavailableTexts.length,
+)
+check('молчащий офлайн-движок назван офлайн-движком', /офлайн/.test(unavailableTexts[1] as string))
+check('неответивший плагин назван плагином', /плагин/.test(unavailableTexts[2] as string))
+check(
+  'отказ в микрофоне не выглядит как отсутствие сервиса',
+  describeAsrUnavailable({ available: false, reason: 'NO_SERVICE', permission: 'denied' }) ===
+    describeMicDenied(),
 )
 check('сервис есть — сообщений нет', describeAsrUnavailable({ available: true }) === null)
 check(
@@ -385,6 +430,53 @@ check(
 )
 check('«закончить» до старта не выдаёт ошибку сервиса', /active && !asrListening/.test(plugin))
 
+// 1.7.3: «распознавание речи недоступно» приходило на устройстве, где системное
+// распознавание работает (в Gboard диктовка живая). Причина — приговор по
+// SpeechRecognizer.isRecognitionAvailable(): на Android 11+ это запрос к
+// PackageManager, и видимость пакетов может скрыть установленный распознаватель.
+// Сама платформа берёт сервис из Settings.Secure.VOICE_RECOGNITION_SERVICE и
+// подключает его в системном процессе, а если сервиса нет — отвечает
+// onError(ERROR_CLIENT). Поэтому теперь: не отказываем по запросу, пробуем
+// создать распознаватель и называем причину конкретно.
+
+check(
+  'наличие сервиса проверяется не только запросом к PackageManager',
+  plugin.includes('SETTING_VOICE_RECOGNITION_SERVICE') &&
+    plugin.includes('"voice_recognition_service"') &&
+    /systemRecognizerPossible\(context\)/.test(plugin) &&
+    /systemRecognizerPossible\(Context context\)[\s\S]{0,220}isRecognitionAvailable\(context\)[\s\S]{0,120}selectedRecognizer\(context\)/.test(
+      plugin,
+    ),
+)
+check(
+  'запрос к пакетам больше не приговор: распознаватель пробуют создать всё равно',
+  !/if \(!SpeechRecognizer\.isRecognitionAvailable\(context\)\) \{[\s\S]{0,200}return false;/.test(plugin) &&
+    /системного распознавателя не видно ни в пакетах, ни в настройках[\s\S]{0,400}createSpeechRecognizer\(context\)/.test(
+      plugin,
+    ),
+)
+check(
+  'повтор после молчания офлайн-движка тоже не зависит от запроса к пакетам',
+  /\? systemRecognizerPossible\(context\)/.test(plugin),
+)
+check(
+  'причина недоступности названа конкретно: движка нет / офлайн-движок молчит',
+  /ret\.put\("reason", deviceModel \? "ONDEVICE_SILENT" : "NO_SERVICE"\)/.test(plugin) &&
+    plugin.includes('ret.put("deviceModel", deviceModel)') &&
+    plugin.includes('ret.put("systemService", service)'),
+)
+check(
+  'отказ создания распознавателя отличается от отсутствия сервиса',
+  plugin.includes('ASR_CREATE_FAILED') &&
+    /asrCreateError = ASR_CREATE_FAILED/.test(plugin) &&
+    /created \? ASR_CREATE_FAILED : "NO_SERVICE"/.test(plugin),
+)
+check(
+  'доступность и причина уходят в журнал устройства',
+  /Logger\.info\(TAG_ASR, "asrAvailable: available="/.test(plugin) &&
+    /Logger\.warn\(TAG_ASR, "распознаватель не подключился/.test(plugin),
+)
+
 // ── Интерфейс: кнопка, отмена, уход в фон ──────────────────────────────
 
 const composer = source('ui/Composer.tsx')
@@ -437,6 +529,24 @@ check(
 const asrLayer = source('lib/asr.ts')
 check('события прошлых сессий игнорируются', /const alive = \(\) => session === mySession/.test(asrLayer))
 check('вне Android распознавание не стартует', /if \(!asrSupported\(\)\) return/.test(asrLayer))
+// 1.7.3: `probeAsr()` терял причину плагина — любая осечка проверки выглядела
+// как 'no-service', и в интерфейсе все они были одной серой фразой. Теперь
+// причина доходит как есть, а «плагин не ответил» отличается от «сервиса нет».
+check(
+  'причина недоступности берётся у плагина, а не подменяется',
+  /reason: info\.available \? undefined : \(\(info\.reason as AsrUnavailableReason\) \?\? 'NO_SERVICE'\)/.test(
+    asrLayer,
+  ) && !/'no-service'/.test(asrLayer),
+)
+check(
+  '«плагин не ответил» отличается от «сервиса нет»',
+  /catch \{[\s\S]{0,160}reason: 'PLUGIN_ERROR'/.test(asrLayer) &&
+    /catch \{[\s\S]{0,160}reason: 'PLUGIN_ERROR'/.test(nativeAsr),
+)
+check(
+  'диагностика плагина (офлайн-движок, видимость сервиса) доходит до интерфейса',
+  /deviceModel: info\.deviceModel/.test(asrLayer) && /systemService: info\.systemService/.test(asrLayer),
+)
 
 // Причина отказа старта должна доходить до человека и до Debug Console: раньше
 // `catch {}` в `useDictation.ts` превращал любой отказ в одну фразу «сервис

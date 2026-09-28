@@ -145,7 +145,8 @@ async function runProbe(set: (patch: Partial<DictationState>) => void): Promise<
   try {
     info = await probeAsr()
   } catch {
-    info = { available: false, reason: 'no-service' }
+    // Проверка упала целиком: это «проверить не удалось», а не «сервиса нет».
+    info = { available: false, reason: 'PLUGIN_ERROR' }
   }
   set({ info })
   debugLog('info', 'Голосовой ввод: проверка системы распознавания', [info])

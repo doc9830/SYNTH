@@ -18,15 +18,27 @@ import { appPlatform, isNativeApp } from './nativeShell'
  * ограничением задачи. Кнопка микрофона в веб-сборке не рисуется.
  */
 
+/**
+ * Почему голосового ввода нет. Токены `NO_SERVICE` / `ONDEVICE_SILENT` /
+ * `PLUGIN_ERROR` приходят от плагина и моста как есть: раньше `probeAsr`
+ * заменял любую причину на общую `no-service`, и в интерфейсе все они выглядели
+ * одной фразой «распознавание недоступно» — по ней нельзя было понять, что чинить.
+ */
 export type AsrUnavailableReason =
   | 'unsupported' // не Android-приложение: системного распознавания нет
-  | 'no-service' // сервис распознавания на устройстве отсутствует
+  | 'NO_SERVICE' // сервиса распознавания на устройстве нет вовсе
+  | 'ONDEVICE_SILENT' // офлайн-движок объявлен, но не отвечает
+  | 'PLUGIN_ERROR' // плагин или мост не ответил: проверить не удалось
 
 export interface AsrInfo {
   available: boolean
   reason?: AsrUnavailableReason
   /** true — распознаёт офлайн-сервис устройства (API 31+), false — системный. */
   onDevice?: boolean
+  /** Диагностика: офлайн-движок объявлен прошивкой устройства. */
+  deviceModel?: boolean
+  /** Диагностика: сервис распознавания виден через PackageManager. */
+  systemService?: boolean
   language?: string
   permission?: string
 }
@@ -82,7 +94,7 @@ export function asrSupported(): boolean {
   return isNativeApp() && appPlatform() === 'android'
 }
 
-/** Проверка сервиса распознавания, офлайн-пакета и разрешения на микрофон. */
+/** Проверка сервиса распознавания, офлайн-движка и разрешения на микрофон. */
 export async function probeAsr(): Promise<AsrInfo> {
   if (!asrSupported()) return { available: false, reason: 'unsupported' }
   const { nativeAsrInfo } = await import('./nativeAsr')
@@ -90,13 +102,19 @@ export async function probeAsr(): Promise<AsrInfo> {
     const info = await nativeAsrInfo()
     return {
       available: info.available,
-      reason: info.available ? undefined : 'no-service',
+      // Причину берём у плагина: он различает «сервиса нет», «офлайн-движок
+      // молчит» и «система не смогла создать распознаватель», и по ней человек
+      // понимает, что делать.
+      reason: info.available ? undefined : ((info.reason as AsrUnavailableReason) ?? 'NO_SERVICE'),
       onDevice: info.onDevice,
+      deviceModel: info.deviceModel,
+      systemService: info.systemService,
       language: info.language,
       permission: info.permission,
     }
   } catch {
-    return { available: false, reason: 'no-service' }
+    // Плагин не ответил — это не «сервиса нет»: так и говорим.
+    return { available: false, reason: 'PLUGIN_ERROR' }
   }
 }
 
@@ -150,6 +168,10 @@ export function asrErrorMessage(code?: string): string {
       return 'Распознавание не достучалось до сервиса: проверьте интернет или офлайн-пакет.'
     case 'PERMISSION_DENIED':
       return 'Нет доступа к микрофону: разрешите его в настройках Android.'
+    case 'CLIENT':
+      // ERROR_CLIENT: система не подключила распознаватель — обычно не выбран
+      // сервис распознавания речи (в 1.7.2 это выглядело как «недоступно»).
+      return 'Системный распознаватель речи не подключился: проверьте, что в настройках Android выбран сервис распознавания речи (Система → Языки и ввод → Распознавание речи).'
     case 'BUSY':
       return 'Распознавание занято: попробуйте ещё раз через пару секунд.'
     case 'AUDIO':
@@ -195,19 +217,40 @@ export function asrFailureCode(error: unknown): string | null {
 export function describeStartFailure(error: unknown): string {
   const code = asrFailureCode(error)
   if (code?.includes('PERMISSION_DENIED') || code?.includes('Нет разрешения')) return describeMicDenied()
+  if (code?.includes('CREATE_FAILED')) {
+    return 'Система не смогла создать распознаватель речи — можно печатать текстом.'
+  }
   if (code?.includes('NO_SERVICE') || code?.includes('недоступно на этом устройстве')) {
-    return 'Распознавание речи недоступно на этом устройстве — можно печатать текстом.'
+    return describeAsrUnavailable({ available: false, reason: 'NO_SERVICE' }) ?? asrErrorMessage('NO_START')
   }
   return asrErrorMessage('NO_START')
 }
 
-/** Причина недоступности распознавания — или null, если оно работает. */
+/**
+ * Причина недоступности распознавания — или null, если оно работает.
+ *
+ * Причина называется конкретно: «сервиса нет» и «офлайн-движок молчит» — это
+ * разные состояния с разными действиями, а общая фраза «недоступно» ничего не
+ * объясняла. Разрешение на микрофон проверяем первым: без него запись не
+ * начнётся, даже когда сервис на устройстве есть.
+ */
 export function describeAsrUnavailable(info: AsrInfo | null): string | null {
   if (info?.available) return null
   if (info?.reason === 'unsupported') {
     return 'Голосовой ввод работает в Android-приложении SYNTH — здесь можно печатать текстом.'
   }
-  return 'Распознавание речи недоступно на этом устройстве — можно печатать текстом.'
+  if (info?.permission && info.permission !== 'granted') return describeMicDenied()
+  switch (info?.reason) {
+    case 'NO_SERVICE':
+      // Частая история на де-Гугленных прошивках и части китайских ромов.
+      return 'Распознавание речи недоступно: сервиса распознавания на устройстве нет — можно печатать текстом.'
+    case 'ONDEVICE_SILENT':
+      return 'Распознавание речи недоступно: офлайн-движок устройства не отвечает, а системного сервиса нет — можно печатать текстом.'
+    case 'PLUGIN_ERROR':
+      return 'Не удалось проверить распознавание речи: плагин не ответил — можно печатать текстом.'
+    default:
+      return 'Распознавание речи недоступно на этом устройстве — можно печатать текстом.'
+  }
 }
 
 /** Отказ в доступе к микрофону: как это исправить. */

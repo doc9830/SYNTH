@@ -1,12 +1,14 @@
 package app.synth.hub;
 
 import android.Manifest;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.Settings;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
@@ -129,6 +131,18 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
      * прошивок офлайн-сервис объявлен, но молчит без скачанного пакета языка.
      */
     private static final int ASR_MAX_ATTEMPTS = 2;
+    /**
+     * Код отказа создания распознавателя: система не смогла его поднять. Второй
+     * код отказа — `NO_SERVICE`: движка распознавания на устройстве нет вовсе.
+     */
+    private static final String ASR_CREATE_FAILED = "CREATE_FAILED";
+    /**
+     * Ключ настройки Android «выбранный сервис распознавания речи». Константа
+     * `Settings.Secure.VOICE_RECOGNITION_SERVICE` помечена `@hide` и в публичном
+     * SDK недоступна, а имя настройки стабильно — держим его строкой, как и коды
+     * ошибок API 31+ (`ERROR_CODE_*`).
+     */
+    private static final String SETTING_VOICE_RECOGNITION_SERVICE = "voice_recognition_service";
 
     /**
      * Коды ошибок сервиса распознавания, добавленные в API 31 — там они
@@ -160,6 +174,13 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
      * ошибка, но и не повод показывать «не ответил» на каждой попытке записи.
      */
     private static boolean onDeviceSilent = false;
+
+    /**
+     * Почему распознаватель не создан в текущей попытке старта: `CREATE_FAILED`
+     * ставится, когда система не смогла создать объект распознавателя; null —
+     * создания не было или оно прошло. Код уходит в JS при отказе старта.
+     */
+    private String asrCreateError;
 
     private static final String TAG_ASR = "SynthSpeech/ASR";
 
@@ -495,25 +516,53 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
     // ── Распознавание речи: методы для JS ────────────────────────────────
 
     /**
-     * Что есть на устройстве: сервис распознавания, офлайн-пакет (API 31+) и
-     * состояние разрешения на микрофон. Причина `NO_SERVICE` означает, что
-     * распознавания нет вовсе (де-Гугленные прошивки, часть китайских ромов) —
-     * интерфейс в этом случае остаётся текстовым, без падений.
+     * Что есть на устройстве: сервис распознавания, офлайн-движок (API 31+) и
+     * состояние разрешения на микрофон.
+     *
+     * Наличие сервиса проверяем двумя независимыми способами, потому что
+     * `isRecognitionAvailable()` — это запрос к PackageManager, а он на Android
+     * 11+ подчиняется видимости пакетов: чужой распознаватель система может не
+     * показать этому приложению, хотя он установлен и работает. Второе мнение —
+     * выбранный пользователем сервис из `Settings.Secure.VOICE_RECOGNITION_SERVICE`:
+     * ровно его берёт сама платформа, когда создаёт системный распознаватель.
+     * Офлайн-движок объявлен в конфигурации прошивки, поэтому он дополняет
+     * системный сервис, а не заменяет его.
+     *
+     * Причина отказа называется конкретно (`NO_SERVICE` — движка нет вовсе,
+     * `ONDEVICE_SILENT` — офлайн-движок молчит, а системного не видно), чтобы её
+     * было понятно без logcat. Диагностические поля `systemService` и
+     * `deviceModel` показывают, что именно нашлось на устройстве.
      */
     @PluginMethod
     public void asrAvailable(PluginCall call) {
         Context context = getContext().getApplicationContext();
         // Офлайн-сервис, который уже промолчал, за рабочий не считаем: интерфейс
         // должен обещать ровно тот движок, который будет использован на записи.
-        boolean onDevice = !onDeviceSilent && onDeviceAvailable(context);
+        boolean deviceModel = onDeviceAvailable(context);
+        boolean onDevice = !onDeviceSilent && deviceModel;
         boolean service = SpeechRecognizer.isRecognitionAvailable(context);
+        boolean selected = selectedRecognizer(context) != null;
+        // Системный распознаватель считаем живым и по выбору пользователя: запрос к
+        // PackageManager может его скрыть (см. `systemRecognizerPossible`).
+        boolean available = systemRecognizerPossible(context) || onDevice;
 
         JSObject ret = new JSObject();
-        ret.put("available", service || onDevice);
-        if (!service && !onDevice) ret.put("reason", "NO_SERVICE");
+        ret.put("available", available);
         ret.put("onDevice", onDevice);
+        ret.put("deviceModel", deviceModel);
+        ret.put("systemService", service);
+        // Разрешение отдаём отдельным полем: интерфейс спрашивает его при первом
+        // нажатии на микрофон, и отказ в доступе не должен выглядеть как
+        // «сервиса распознавания нет».
+        PermissionState permission = getPermissionState("microphone");
         ret.put("language", ASR_LANGUAGE);
-        ret.put("permission", getPermissionState("microphone").toString());
+        ret.put("permission", permission.toString());
+        if (!available) ret.put("reason", deviceModel ? "ONDEVICE_SILENT" : "NO_SERVICE");
+        Logger.info(TAG_ASR, "asrAvailable: available=" + available
+                + ", systemService=" + service
+                + ", selectedService=" + selected
+                + ", deviceModel=" + deviceModel
+                + ", permission=" + permission);
         call.resolve(ret);
     }
 
@@ -558,7 +607,14 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
             return;
         }
         if (!ensureRecognizer()) {
-            call.reject("Распознавание речи недоступно на этом устройстве.", "NO_SERVICE");
+            // Причина отказа конкретная: движка нет вовсе или система не смогла
+            // создать распознаватель — подменять её общей фразой нельзя.
+            boolean created = ASR_CREATE_FAILED.equals(asrCreateError);
+            call.reject(
+                    created
+                            ? "Система не смогла создать распознаватель речи."
+                            : "Сервиса распознавания речи на устройстве нет.",
+                    created ? ASR_CREATE_FAILED : "NO_SERVICE");
             return;
         }
 
@@ -637,8 +693,10 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
         // самый молчащий сервис со второй попытки не ответит, а человек ждал бы
         // ошибку вдвое дольше.
         Context context = getContext().getApplicationContext();
+        // «Есть ли другой распознаватель» решает та же проверка, что и при старте:
+        // один запрос к PackageManager ещё не приговор (см. `systemRecognizerPossible`).
         boolean alternate = wasOnDevice
-                ? SpeechRecognizer.isRecognitionAvailable(context)
+                ? systemRecognizerPossible(context)
                 : (!onDeviceSilent && onDeviceAvailable(context));
         if (alternate && asrAttempts < ASR_MAX_ATTEMPTS) {
             recognizing = true;
@@ -718,9 +776,19 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
         call.resolve(ret);
     }
 
-    /** Создаёт распознаватель: офлайн-сервис устройства, иначе системный. */
+    /**
+     * Создаёт распознаватель: офлайн-движок устройства, иначе системный.
+     *
+     * Системный распознаватель пробуем всегда (если офлайн не поднялся или уже
+     * молчал). Раньше здесь стоял приговор по `isRecognitionAvailable()` — и на
+     * Android 11+ он врал: запрос к PackageManager подчиняется видимости пакетов,
+     * поэтому установленный и рабочий распознаватель мог быть не виден, и живой
+     * Gboard уживался с сообщением «распознавание речи недоступно». Правду знает
+     * только сам сервис: если его нет, система ответит `onError(ERROR_CLIENT)`.
+     */
     private boolean ensureRecognizer() {
         if (recognizer != null) return true;
+        asrCreateError = null;
         Context context = getContext().getApplicationContext();
 
         // Офлайн-сервис пропускаем, если он уже молчал: ждать его второй раз
@@ -733,24 +801,54 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
                 // Офлайн-сервис объявлен, но не поднимается — берём системный.
                 Logger.warn(TAG_ASR, "createOnDeviceSpeechRecognizer: " + e.getMessage() + " — берём системный сервис");
                 recognizer = null;
+                recognizerOnDevice = false;
             }
         }
         if (recognizer == null) {
-            if (!SpeechRecognizer.isRecognitionAvailable(context)) {
-                Logger.warn(TAG_ASR, "сервис распознавания речи не найден");
-                return false;
+            if (!systemRecognizerPossible(context)) {
+                Logger.warn(TAG_ASR, "системного распознавателя не видно ни в пакетах, ни в настройках — пробуем подключить всё равно");
             }
             try {
                 recognizer = SpeechRecognizer.createSpeechRecognizer(context);
             } catch (Exception e) {
                 Logger.warn(TAG_ASR, "createSpeechRecognizer: " + e.getMessage());
                 recognizer = null;
+                asrCreateError = ASR_CREATE_FAILED;
                 return false;
             }
             recognizerOnDevice = false;
         }
         recognizer.setRecognitionListener(this);
+        Logger.info(TAG_ASR, "распознаватель создан: " + sourceName());
         return true;
+    }
+
+    /**
+     * Может ли работать системный распознаватель. `isRecognitionAvailable()` —
+     * это запрос к PackageManager, и на Android 11+ его ответ зависит от
+     * видимости пакетов: «нет» здесь ещё не значит, что сервиса нет. Второе
+     * мнение — выбранный пользователем сервис (`Settings.Secure.
+     * VOICE_RECOGNITION_SERVICE`): его берёт сама платформа, когда создаёт
+     * системный распознаватель.
+     */
+    private static boolean systemRecognizerPossible(Context context) {
+        return SpeechRecognizer.isRecognitionAvailable(context) || selectedRecognizer(context) != null;
+    }
+
+    /**
+     * Выбранный пользователем сервис распознавания (компонент из настроек
+     * Android). Пустое значение — честный признак того, что системного
+     * распознавателя на устройстве нет.
+     */
+    private static ComponentName selectedRecognizer(Context context) {
+        try {
+            String component = Settings.Secure.getString(
+                    context.getContentResolver(), SETTING_VOICE_RECOGNITION_SERVICE);
+            return component == null ? null : ComponentName.unflattenFromString(component);
+        } catch (Exception e) {
+            Logger.warn(TAG_ASR, "выбранный распознаватель недоступен: " + e.getMessage());
+            return null;
+        }
     }
 
     private static boolean onDeviceAvailable(Context context) {
@@ -841,6 +939,12 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
         }
         String code = errorCode(error);
         Logger.warn(TAG_ASR, "ошибка распознавания: " + code + " (" + error + ")");
+        if ("CLIENT".equals(code)) {
+            // ERROR_CLIENT приходит и тогда, когда система не смогла подключить
+            // распознаватель: обычно в настройках Android не выбран сервис
+            // распознавания речи.
+            Logger.warn(TAG_ASR, "распознаватель не подключился: проверьте выбор сервиса распознавания речи в настройках Android");
+        }
         emitRecognition("error", null, code, null);
     }
 

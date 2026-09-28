@@ -18,10 +18,19 @@ export type MicPermission = 'granted' | 'denied' | 'prompt' | 'prompt-with-ratio
 
 export interface NativeAsrInfo {
   available: boolean
-  /** `NO_SERVICE` — сервиса распознавания на устройстве нет. */
+  /**
+   * Причина, если распознавания нет: `NO_SERVICE` — сервиса на устройстве нет,
+   * `ONDEVICE_SILENT` — офлайн-движок объявлен, но не отвечает,
+   * `PLUGIN_ERROR` — плагин не ответил. Токен отдаём как есть: по нему
+   * интерфейс говорит, чего именно не хватает.
+   */
   reason?: string
   /** true — распознаёт офлайн-сервис устройства (API 31+). */
   onDevice?: boolean
+  /** Диагностика: офлайн-движок объявлен прошивкой устройства. */
+  deviceModel?: boolean
+  /** Диагностика: сервис распознавания виден через PackageManager. */
+  systemService?: boolean
   language?: string
   permission?: MicPermission
 }
@@ -69,14 +78,15 @@ export function nativeAsrAvailable(): boolean {
   return isNativeApp() && Capacitor.getPlatform() === 'android'
 }
 
-/** Есть ли сервис распознавания, офлайн-пакет и разрешение на микрофон. */
+/** Есть ли сервис распознавания, офлайн-движок и разрешение на микрофон. */
 export async function nativeAsrInfo(): Promise<NativeAsrInfo> {
   if (!nativeAsrAvailable()) return { available: false, reason: 'NO_SERVICE' }
   try {
     const info = await asr().asrAvailable()
     return { ...info, available: Boolean(info?.available) }
   } catch {
-    return { available: false, reason: 'NO_SERVICE' }
+    // Мост или плагин не ответил: это не «сервиса нет», а «проверить не удалось».
+    return { available: false, reason: 'PLUGIN_ERROR' }
   }
 }
 

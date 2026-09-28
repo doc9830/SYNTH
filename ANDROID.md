@@ -196,7 +196,7 @@ markdown на фрагменты — `src/lib/ttsText.ts`.
 - на Android 11+ (API 30) запрос подчиняется видимости пакетов, поэтому рядом с
   `IMAGE_CAPTURE`/`VIDEO_CAPTURE`/`TTS_SERVICE` в `AndroidManifest.xml` есть
   `<queries><intent><action android:name="android.speech.RecognitionService"/></intent></queries>`
-  (проверено и в собранном APK: `aapt2 dump xmltree --file AndroidManifest.xml synth-v1.7.3.apk`);
+  (проверено и в собранном APK: `aapt2 dump xmltree --file AndroidManifest.xml synth-v1.7.4.apk`);
 - начиная с Android 12 (API 31) приложение вообще не подключает сервис само: платформа берёт
   компонент из `Settings.Secure.VOICE_RECOGNITION_SERVICE` и соединяет его в системном процессе
   (`RecognitionServiceManager.createSession()`). Поэтому ответ запроса может быть `false` при
@@ -221,6 +221,15 @@ markdown на фрагменты — `src/lib/ttsText.ts`.
 ### Путь старта записи
 
 Старт `SpeechRecognizer` — самая хрупкая часть голосового ввода, поэтому в плагине он устроен так:
+
+Первое и обязательное условие — **главный поток**: `SpeechRecognizer` документирует, что его методы
+вызываются только из главного потока приложения, а методы плагина Capacitor выполняются в фоновом
+`CapacitorPlugins` (`Bridge.callPluginMethod` → `taskHandler.post`). Поэтому все входы распознавания
+(`startRecognize`, `stopRecognize`, `cancelRecognize`) проходят через `onMainThread()`. Оттуда создание
+распознавателя падало на проверке потока (`checkIsCalledFromMainThread()`) — в 1.7.3 это выглядело как
+«Система не смогла создать распознаватель речи» (код `CREATE_FAILED`), а в 1.7.2 как «сервис
+распознавания не ответил»: `startListening()` из фонового потока не доходил до сервиса, подключённого
+в главном. Дальше сам старт устроен так:
 
 1. **Пауза на подключение** (`ASR_BIND_DELAY_MS`, 350 мс): `startListening()` уходит в сервис не в том
    же кадре, где создан распознаватель. Свежий распознаватель только подключается (`bindService`), а
@@ -345,12 +354,12 @@ markdown на фрагменты — `src/lib/ttsText.ts`.
 
 ```bash
 # 1. версия веб-бандла (попадает в appInfo → APP_VERSION)
-#    package.json → "version": "1.7.3"
+#    package.json → "version": "1.7.4"
 # 2. версия пакета
-#    android/app/build.gradle → versionCode 15, versionName "1.7.3"
+#    android/app/build.gradle → versionCode 16, versionName "1.7.4"
 npm run android:release
-cp android/app/build/outputs/apk/release/app-release.apk synth-v1.7.3.apk
-# 3. GitHub → Releases → Draft a new release: tag v1.7.3, приложить synth-v1.7.3.apk
+cp android/app/build/outputs/apk/release/app-release.apk synth-v1.7.4.apk
+# 3. GitHub → Releases → Draft a new release: tag v1.7.4, приложить synth-v1.7.4.apk
 ```
 
 После публикации релиза приложения на телефонах увидят обновление при следующем запуске.

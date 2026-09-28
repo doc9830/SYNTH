@@ -218,7 +218,7 @@ export function describeStartFailure(error: unknown): string {
   const code = asrFailureCode(error)
   if (code?.includes('PERMISSION_DENIED') || code?.includes('Нет разрешения')) return describeMicDenied()
   if (code?.includes('CREATE_FAILED')) {
-    return 'Система не смогла создать распознаватель речи — можно печатать текстом.'
+    return 'Система не смогла создать распознаватель речи: проверьте, что в настройках Android выбран сервис распознавания речи, — или печатайте текстом.'
   }
   if (code?.includes('NO_SERVICE') || code?.includes('недоступно на этом устройстве')) {
     return describeAsrUnavailable({ available: false, reason: 'NO_SERVICE' }) ?? asrErrorMessage('NO_START')

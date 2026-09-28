@@ -46,6 +46,11 @@ import java.util.Set;
  * системный сервис распознавания. Аудио нигде не хранится и никуда не
  * отправляется приложением; микрофон отпускается сразу после записи.
  *
+ * Оба движка работают в главном потоке приложения: `SpeechRecognizer` требует
+ * этого прямо (его методы вызываются только из главного потока), а методы
+ * плагина Capacitor выполняются в фоновом потоке `CapacitorPlugins` — поэтому
+ * входы распознавания проходят через {@code onMainThread()} (см. ниже).
+ *
  * Методы для JS:
  *   available()                  → { available, reason?, engine?, voice?, language?, needsNetwork }
  *   speak({chunks, rate, pitch}) → ставит фрагменты в очередь, шлёт события "progress"
@@ -590,6 +595,29 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
     }
 
     /**
+     * Выполняет задачу в главном потоке приложения.
+     *
+     * `SpeechRecognizer` документирует это как обязательное условие: его методы
+     * вызываются только из главного потока приложения. Поэтому
+     * `createSpeechRecognizer()` вне главного потока бросает исключение, а
+     * подключённый в главном потоке сервис остаётся невидимым для фонового:
+     * `startListening()` уходит в никуда, и запись выглядит как молчащая.
+     *
+     * Методы плагина Capacitor выполняются не в главном потоке, а в фоновом
+     * `CapacitorPlugins` (`Bridge.callPluginMethod` → `taskHandler.post`),
+     * поэтому вход в распознавание проходит через этот шлюз. В 1.7.3 из-за него
+     * человек видел «Система не смогла создать распознаватель речи», а в 1.7.2 —
+     * «сервис распознавания не ответил».
+     */
+    private void onMainThread(Runnable task) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            task.run();
+            return;
+        }
+        handler.post(task);
+    }
+
+    /**
      * Старт записи. Офлайн-сервис устройства берём, когда он есть (API 31+);
      * иначе — системный сервис с `EXTRA_PREFER_OFFLINE`: система может уйти в
      * сеть, и об этом честно предупреждает интерфейс.
@@ -602,6 +630,17 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
      */
     @PluginMethod
     public void startRecognize(PluginCall call) {
+        // `SpeechRecognizer` живёт в главном потоке — см. `onMainThread`.
+        onMainThread(() -> startRecognizeOnMain(call));
+    }
+
+    /**
+     * Тело `startRecognize`: выполняется в главном потоке, там же, где потом
+     * приходят колбэки сервиса. Иначе создание распознавателя падало бы на
+     * проверке потока внутри `SpeechRecognizer`, и старт выглядел бы как отказ
+     * системы создать распознаватель.
+     */
+    private void startRecognizeOnMain(PluginCall call) {
         if (getPermissionState("microphone") != PermissionState.GRANTED) {
             call.reject("Нет разрешения на микрофон.", "PERMISSION_DENIED");
             return;
@@ -735,6 +774,12 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
     /** «Закончить»: сервис отдаёт итоговый текст (частичный сохраняется в JS). */
     @PluginMethod
     public void stopRecognize(PluginCall call) {
+        // `SpeechRecognizer.stopListening()` вызывается только из главного потока.
+        onMainThread(() -> stopRecognizeOnMain(call));
+    }
+
+    /** Тело `stopRecognize`: см. `onMainThread`. */
+    private void stopRecognizeOnMain(PluginCall call) {
         boolean active = recognizing && recognizer != null;
         if (active && !asrListening) {
             // «Закончить» пришло раньше самого старта (запись ещё поднималась):
@@ -767,6 +812,12 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
      */
     @PluginMethod
     public void cancelRecognize(PluginCall call) {
+        // `cancel()`/`destroy()` распознавателя — тоже только главный поток.
+        onMainThread(() -> cancelRecognizeOnMain(call));
+    }
+
+    /** Тело `cancelRecognize`: см. `onMainThread`. */
+    private void cancelRecognizeOnMain(PluginCall call) {
         boolean active = recognizing;
         cancelRequested = true;
         destroyRecognizer();
@@ -785,6 +836,9 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
      * поэтому установленный и рабочий распознаватель мог быть не виден, и живой
      * Gboard уживался с сообщением «распознавание речи недоступно». Правду знает
      * только сам сервис: если его нет, система ответит `onError(ERROR_CLIENT)`.
+     *
+     * Вызывать только из главного потока: `createSpeechRecognizer()` проверяет
+     * поток и вне главного падает — см. {@code onMainThread()}.
      */
     private boolean ensureRecognizer() {
         if (recognizer != null) return true;
@@ -811,8 +865,16 @@ public class SpeechPlugin extends Plugin implements TextToSpeech.OnInitListener,
             try {
                 recognizer = SpeechRecognizer.createSpeechRecognizer(context);
             } catch (Exception e) {
-                Logger.warn(TAG_ASR, "createSpeechRecognizer: " + e.getMessage());
+                // Полный текст исключения: по нему видно, что именно не дало
+                // создать распознаватель (например, вызов не из главного потока).
+                Logger.warn(TAG_ASR, "createSpeechRecognizer: " + e);
                 recognizer = null;
+                asrCreateError = ASR_CREATE_FAILED;
+                return false;
+            }
+            if (recognizer == null) {
+                // Системный класс вернул пустой объект — создать не удалось.
+                Logger.warn(TAG_ASR, "createSpeechRecognizer вернул null: распознаватель не поднялся");
                 asrCreateError = ASR_CREATE_FAILED;
                 return false;
             }

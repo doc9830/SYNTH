@@ -477,6 +477,29 @@ check(
     /Logger\.warn\(TAG_ASR, "распознаватель не подключился/.test(plugin),
 )
 
+// 1.7.4: после снятия приговора по запросу к пакетам (1.7.3) голосовой ввод
+// стал падать с «Система не смогла создать распознаватель речи». Причина —
+// поток: `SpeechRecognizer` документирует работу только из главного потока
+// («его методы вызываются только из главного потока приложения»), а методы
+// плагина Capacitor выполняются в фоновом `CapacitorPlugins`
+// (`Bridge.callPluginMethod` → `taskHandler.post`). Оттуда создание
+// распознавателя падало на проверке потока, а `startListening()` уходил в
+// никуда — тем же объяснялся «молчащий сервис» в 1.7.2. Теперь вход в
+// распознавание проходит через `onMainThread()`.
+check(
+  'вход в распознавание выполняется в главном потоке, а не в фоновом потоке плагинов',
+  /Looper\.myLooper\(\) == Looper\.getMainLooper\(\)/.test(plugin) &&
+    /onMainThread\(\(\) -> startRecognizeOnMain\(call\)\)/.test(plugin) &&
+    /onMainThread\(\(\) -> stopRecognizeOnMain\(call\)\)/.test(plugin) &&
+    /onMainThread\(\(\) -> cancelRecognizeOnMain\(call\)\)/.test(plugin),
+)
+check(
+  'пустой объект распознавателя не выдаётся за созданный',
+  plugin.includes('createSpeechRecognizer вернул null') &&
+    /recognizer == null\) \{[\s\S]{0,200}asrCreateError = ASR_CREATE_FAILED;/.test(plugin),
+)
+check('тело старта отделено от метода плагина', /private void startRecognizeOnMain\(PluginCall call\)/.test(plugin))
+
 // ── Интерфейс: кнопка, отмена, уход в фон ──────────────────────────────
 
 const composer = source('ui/Composer.tsx')

@@ -162,7 +162,7 @@ markdown на фрагменты — `src/lib/ttsText.ts`.
 
 | Метод | Что делает |
 | --- | --- |
-| `asrAvailable()` | есть ли сервис распознавания: `{available, reason?, onDevice?, language?, permission?}` |
+| `asrAvailable()` | что есть на устройстве: `{available, reason?, onDevice?, deviceModel?, systemService?, language?, permission?}` |
 | `requestMic()` | запрашивает `RECORD_AUDIO` при первом использовании (системный диалог) |
 | `startRecognize({lang, silenceMs})` | начинает сессию записи, шлёт события `recognize` |
 | `stopRecognize()` | заканчивает запись: система отдаёт итоговый текст (`final`) |
@@ -170,17 +170,53 @@ markdown на фрагменты — `src/lib/ttsText.ts`.
 
 События `recognize` (`state`): `ready`, `speech`, `partial` (частичный текст — показывается в поле
 ввода сразу), `silence`, `final`, `error` (`NO_MATCH`, `SILENCE`, `NETWORK`, `PERMISSION_DENIED`,
-`BUSY`, `AUDIO`, `SERVER`, `NO_START`, `NO_RESULT`, `TOO_MANY`, `NO_LANGUAGE`, `NO_PACK`),
+`CLIENT`, `BUSY`, `AUDIO`, `SERVER`, `NO_START`, `NO_RESULT`, `TOO_MANY`, `NO_LANGUAGE`, `NO_PACK`),
 `cancelled` (`reason: user` или `lifecycle`).
 
 Коды API 31+ (`TOO_MANY` 10, сеть 11, `NO_LANGUAGE` 12, `NO_PACK` 13–15) держатся в плагине числами
 (`ERROR_CODE_*`): на старых API этих констант нет, а значения нужны. В `src/lib/asr.ts` у каждого кода
 своя фраза — `NO_PACK` прямо говорит, где искать русский офлайн-пакет.
 
+Отказы метода `startRecognize` приходят кодом (не текстом): `PERMISSION_DENIED` (микрофон не
+разрешён), `NO_SERVICE` (распознавателя на устройстве нет), `CREATE_FAILED` (система не смогла создать
+распознаватель). Проверка `asrAvailable()` при недоступности называет свою причину в `reason`:
+`NO_SERVICE` или `ONDEVICE_SILENT` (офлайн-движок объявлен, но молчит, а системного не видно). Если
+плагин или мост не ответил вовсе, `src/lib/asr.ts` подставляет `PLUGIN_ERROR` — это «проверить не
+удалось», а не «сервиса нет».
+
 Как выбирается движок: на API 31+ — `createOnDeviceSpeechRecognizer()`, если
 `isOnDeviceRecognitionAvailable()` подтверждает офлайн-пакет (распознавание офлайн); на более
 старых версиях — обычный системный сервис с `EXTRA_PREFER_OFFLINE`, который может уйти в облако
 (приложение предупреждает об этом один раз). Язык — `ru-RU`, автостоп по тишине — 1100 мс.
+
+### Как решается, что распознавание доступно
+
+`SpeechRecognizer.isRecognitionAvailable()` — это запрос к PackageManager, и он **не приговор**:
+
+- на Android 11+ (API 30) запрос подчиняется видимости пакетов, поэтому рядом с
+  `IMAGE_CAPTURE`/`VIDEO_CAPTURE`/`TTS_SERVICE` в `AndroidManifest.xml` есть
+  `<queries><intent><action android:name="android.speech.RecognitionService"/></intent></queries>`
+  (проверено и в собранном APK: `aapt2 dump xmltree --file AndroidManifest.xml synth-v1.7.3.apk`);
+- начиная с Android 12 (API 31) приложение вообще не подключает сервис само: платформа берёт
+  компонент из `Settings.Secure.VOICE_RECOGNITION_SERVICE` и соединяет его в системном процессе
+  (`RecognitionServiceManager.createSession()`). Поэтому ответ запроса может быть `false` при
+  установленном и работающем распознавании (в Gboard диктовка живёт, а запрос молчит);
+- если сервиса правда нет, система отвечает `onError(ERROR_CLIENT)` — уже после старта.
+
+Поэтому в `asrAvailable()` доступность считается по двум сигналам плюс офлайн-движок:
+
+| Что проверяется | Как | Зачем |
+| --- | --- | --- |
+| системный сервис виден | `SpeechRecognizer.isRecognitionAvailable()` | быстрый и обычный случай |
+| сервис выбран пользователем | настройка `voice_recognition_service` из `Settings.Secure` (`selectedRecognizer()`); константа `VOICE_RECOGNITION_SERVICE` помечена `@hide`, поэтому имя настройки держится строкой | тот же компонент, что берёт платформа |
+| офлайн-движок устройства | `isOnDeviceRecognitionAvailable()` (API 31+), кроме уже промолчавшего | распознавание без сети |
+
+`available` — «или» этих сигналов (`systemRecognizerPossible() || onDevice`), а `ensureRecognizer()`
+пробует создать распознаватель даже при молчащем запросе: окончательный ответ даёт сам сервис. Если
+ничего нет, `reason` называет причину — `NO_SERVICE` (движка нет вовсе) или `ONDEVICE_SILENT`
+(офлайн-движок объявлен, но молчит, а системного не видно), — и эта же причина уходит словами в
+интерфейс. Разрешение на микрофон отдаётся отдельным полем `permission`: интерфейс спрашивает его при
+первом нажатии, и отказ в доступе не должен выглядеть как отсутствие сервиса.
 
 ### Путь старта записи
 
@@ -242,7 +278,10 @@ markdown на фрагменты — `src/lib/ttsText.ts`.
   Слушатель событий `recognize` снимается в конце сессии — «висит» он не дольше самой записи.
 - **`<queries>` для `android.speech.RecognitionService`** обязателен на Android 11+ (API 30): без
   этой записи `SpeechRecognizer.isRecognitionAvailable()` отвечает false, хотя сервис распознавания
-  на устройстве есть, и голосовой ввод молча считался бы недоступным.
+  на устройстве есть, и голосовой ввод молча считался бы недоступным. Но и с этой записью ответ
+  запроса — не истина в последней инстанции: до 1.7.3 доступность считалась только по нему, и на
+  исправном устройстве `asrAvailable()` отдавала «сервиса нет». Подробности — в разделе «Как
+  решается, что распознавание доступно».
 - **Распознанный текст только вставляется в поле ввода**: автоотправки нет — сообщение уходит
   отдельным действием пользователя. Частичные результаты (`partial`) показываются сразу, готовый
   текст заменяет их при `final`, а результат отменённой сессии выбрасывается. Записи не пишутся на
@@ -251,10 +290,12 @@ markdown на фрагменты — `src/lib/ttsText.ts`.
   `useDictation.ts`): микрофон не остаётся работать в кармане, а уже распознанный текст остаётся в
   поле ввода. На нативной стороне те же `handleOnPause`/`handleOnStop`/`handleOnDestroy` вызывают
   `destroyRecognizer()` — по документации это единственный корректный способ освободить микрофон.
-- **Нет сервиса распознавания — нет и кнопки**: на де-Гугленных прошивках и части китайских ромов
-  кнопка микрофона не рисуется вовсе, текстовый ввод работает как раньше. В браузере её тоже нет:
-  системного `SpeechRecognizer` там не существует, а `SpeechRecognition` работает через облако —
-  облачные STT запрещены ограничениями задачи.
+- **Нет сервиса распознавания — кнопка не исчезает**: на де-Гугленных прошивках и части китайских
+  ромов кнопка микрофона остаётся на месте, но приглушена (`opacity-50`), а по нажатию объясняет
+  причину словами (`reason` из `asrAvailable()`: `NO_SERVICE`, `ONDEVICE_SILENT`, отказ в
+  разрешении) — текстовый ввод работает как раньше. В браузере кнопки нет вовсе: системного
+  `SpeechRecognizer` там не существует, а `SpeechRecognition` работает через облако — облачные STT
+  запрещены ограничениями задачи.
 - **Строка кнопок у сообщения на телефоне видна всегда** (`@media (hover: none)` для класса
   `msg-actions` в `index.css`): на тач-экране наведения курсора нет, и «Озвучить»/«Копировать»/
   «Поделиться» иначе остаются невидимыми.
@@ -304,12 +345,12 @@ markdown на фрагменты — `src/lib/ttsText.ts`.
 
 ```bash
 # 1. версия веб-бандла (попадает в appInfo → APP_VERSION)
-#    package.json → "version": "1.7.2"
+#    package.json → "version": "1.7.3"
 # 2. версия пакета
-#    android/app/build.gradle → versionCode 14, versionName "1.7.2"
+#    android/app/build.gradle → versionCode 15, versionName "1.7.3"
 npm run android:release
-cp android/app/build/outputs/apk/release/app-release.apk synth-v1.7.2.apk
-# 3. GitHub → Releases → Draft a new release: tag v1.7.2, приложить synth-v1.7.2.apk
+cp android/app/build/outputs/apk/release/app-release.apk synth-v1.7.3.apk
+# 3. GitHub → Releases → Draft a new release: tag v1.7.3, приложить synth-v1.7.3.apk
 ```
 
 После публикации релиза приложения на телефонах увидят обновление при следующем запуске.
